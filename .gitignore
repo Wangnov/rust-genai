@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+**/*.swp
+**/.DS_Store
+.env
+token.json
+client_secret.json
+/rust-genai/examples/files/output/
+.claude/
+.codex/
+.gemini/
+.agents/
+.vscode/
