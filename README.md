@@ -1,8 +1,13 @@
 # Rust Gemini SDK (rust-genai)
 
 [![crates.io](https://img.shields.io/crates/v/rust-genai.svg)](https://crates.io/crates/rust-genai)
-[![docs.rs](https://docs.rs/rust-genai/badge.svg)](https://docs.rs/rust-genai)
-[![license](https://img.shields.io/crates/l/rust-genai.svg)](LICENSE)
+[![docs.rs](https://img.shields.io/docsrs/rust-genai)](https://docs.rs/rust-genai)
+[![license](https://img.shields.io/github/license/Wangnov/rust-genai)](LICENSE)
+[![CI](https://github.com/Wangnov/rust-genai/actions/workflows/ci.yml/badge.svg)](https://github.com/Wangnov/rust-genai/actions/workflows/ci.yml)
+[![Crates.io Downloads](https://img.shields.io/crates/d/rust-genai.svg)](https://crates.io/crates/rust-genai)
+[![MSRV](https://img.shields.io/crates/msrv/rust-genai)](https://crates.io/crates/rust-genai)
+[![GitHub Release](https://img.shields.io/github/v/release/Wangnov/rust-genai)](https://github.com/Wangnov/rust-genai/releases)
+[![Deps](https://deps.rs/repo/github/Wangnov/rust-genai/status.svg)](https://deps.rs/repo/github/Wangnov/rust-genai)
 
 **Language: 中文 | [English](#installation-1)**
 
