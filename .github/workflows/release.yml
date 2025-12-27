@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "rust-genai-v*"
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify rust-genai-types
+        run: cargo package -p rust-genai-types
+
+      - name: Publish rust-genai-types
+        run: cargo publish -p rust-genai-types --token ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Verify rust-genai
+        run: cargo package -p rust-genai
+
+      - name: Publish rust-genai
+        run: cargo publish -p rust-genai --token ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Verify rust-genai-macros
+        run: cargo package -p rust-genai-macros
+
+      - name: Publish rust-genai-macros
+        run: cargo publish -p rust-genai-macros --token ${{ secrets.CRATES_IO_TOKEN }}
