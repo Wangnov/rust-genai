@@ -9,6 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
 jobs:
   release:
@@ -27,7 +28,7 @@ jobs:
         run: cargo package -p rust-genai-types
 
       - name: Publish rust-genai-types
-        run: cargo publish -p rust-genai-types --token ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p rust-genai-types
 
       - name: Wait for crates.io index update
         run: sleep 30
@@ -36,7 +37,7 @@ jobs:
         run: cargo package -p rust-genai
 
       - name: Publish rust-genai
-        run: cargo publish -p rust-genai --token ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p rust-genai
 
       - name: Wait for crates.io index update
         run: sleep 30
@@ -45,4 +46,4 @@ jobs:
         run: cargo package -p rust-genai-macros
 
       - name: Publish rust-genai-macros
-        run: cargo publish -p rust-genai-macros --token ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p rust-genai-macros
