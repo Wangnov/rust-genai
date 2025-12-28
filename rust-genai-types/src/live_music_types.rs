@@ -1,8 +1,7 @@
 //! Live Music types.
 
-use serde::{Deserialize, Serialize};
-
 use crate::base64_serde;
+use serde::{Deserialize, Serialize};
 
 /// Scale of the generated music.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
@@ -101,7 +100,7 @@ pub struct LiveMusicGenerationConfig {
     pub music_generation_mode: Option<MusicGenerationMode>,
 }
 
-/// Messages sent by the client in the LiveMusicClientMessage call.
+/// Messages sent by the client in the `LiveMusicClientMessage` call.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveMusicClientMessage {
@@ -164,7 +163,7 @@ pub struct LiveMusicFilteredPrompt {
     pub filtered_reason: Option<String>,
 }
 
-/// Response message for the LiveMusicClientMessage call.
+/// Response message for the `LiveMusicClientMessage` call.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveMusicServerMessage {
@@ -178,10 +177,61 @@ pub struct LiveMusicServerMessage {
 
 impl LiveMusicServerMessage {
     /// 获取首个音频 chunk。
+    #[must_use]
     pub fn first_audio_chunk(&self) -> Option<&AudioChunk> {
         self.server_content
             .as_ref()
             .and_then(|content| content.audio_chunks.as_ref())
             .and_then(|chunks| chunks.first())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn first_audio_chunk_returns_first() {
+        let message = LiveMusicServerMessage {
+            server_content: Some(LiveMusicServerContent {
+                audio_chunks: Some(vec![
+                    AudioChunk {
+                        data: Some(vec![1, 2, 3]),
+                        mime_type: Some("audio/wav".to_string()),
+                        source_metadata: None,
+                    },
+                    AudioChunk {
+                        data: Some(vec![4, 5]),
+                        mime_type: None,
+                        source_metadata: None,
+                    },
+                ]),
+            }),
+            ..Default::default()
+        };
+
+        let first = message.first_audio_chunk().unwrap();
+        assert_eq!(first.mime_type.as_deref(), Some("audio/wav"));
+    }
+
+    #[test]
+    fn audio_chunk_base64_roundtrip() {
+        let chunk = AudioChunk {
+            data: Some(vec![9, 8, 7]),
+            mime_type: Some("audio/raw".to_string()),
+            source_metadata: None,
+        };
+        let value = serde_json::to_value(&chunk).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "data": "CQgH",
+                "mimeType": "audio/raw"
+            })
+        );
+
+        let decoded: AudioChunk = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.data, Some(vec![9, 8, 7]));
     }
 }

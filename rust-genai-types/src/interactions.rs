@@ -17,15 +17,18 @@ pub enum InteractionInput {
 }
 
 impl InteractionInput {
+    #[must_use]
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text(text.into())
     }
 
-    pub fn contents(contents: Vec<InteractionContent>) -> Self {
+    #[must_use]
+    pub const fn contents(contents: Vec<InteractionContent>) -> Self {
         Self::Contents(contents)
     }
 
-    pub fn turns(turns: Vec<InteractionTurn>) -> Self {
+    #[must_use]
+    pub const fn turns(turns: Vec<InteractionTurn>) -> Self {
         Self::Turns(turns)
     }
 }
@@ -402,6 +405,51 @@ mod tests {
         assert_eq!(
             event.data.as_ref().and_then(|d| d.id.as_deref()),
             Some("int_123")
+        );
+    }
+
+    #[test]
+    fn interaction_content_helpers() {
+        let image = InteractionContent::image_data("AAAA", "image/png");
+        assert_eq!(image.content_type, "image");
+        assert_eq!(image.mime_type.as_deref(), Some("image/png"));
+
+        let audio = InteractionContent::audio_data("BBBB", "audio/wav");
+        assert_eq!(audio.content_type, "audio");
+        assert_eq!(audio.mime_type.as_deref(), Some("audio/wav"));
+    }
+
+    #[test]
+    fn interaction_input_from_str() {
+        let input: InteractionInput = "hi".into();
+        let json = serde_json::to_string(&input).unwrap();
+        assert_eq!(json, "\"hi\"");
+    }
+
+    #[test]
+    fn create_interaction_config_new_sets_fields() {
+        let config = CreateInteractionConfig::new("model-1", "hello");
+        assert_eq!(config.model, "model-1");
+        match config.input {
+            InteractionInput::Text(value) => assert_eq!(value, "hello"),
+            _ => panic!("expected text input"),
+        }
+    }
+
+    #[test]
+    fn interaction_event_alias_event_type() {
+        let json = r#"{
+            "eventType": "interactions.update",
+            "data": {
+                "id": "int_456",
+                "model": "gemini-2.0-flash"
+            }
+        }"#;
+        let event: InteractionEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type.as_deref(), Some("interactions.update"));
+        assert_eq!(
+            event.data.as_ref().and_then(|d| d.id.as_deref()),
+            Some("int_456")
         );
     }
 }

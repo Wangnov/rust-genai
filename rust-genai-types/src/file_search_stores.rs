@@ -101,7 +101,7 @@ pub struct ChunkingConfig {
     pub white_space_config: Option<WhiteSpaceConfig>,
 }
 
-/// Optional parameters for uploading a file to a FileSearchStore.
+/// Optional parameters for uploading a file to a `FileSearchStore`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadToFileSearchStoreConfig {
@@ -137,7 +137,7 @@ pub struct ImportFileConfig {
     pub chunking_config: Option<ChunkingConfig>,
 }
 
-/// Response for importing a file into a FileSearchStore.
+/// Response for importing a file into a `FileSearchStore`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportFileResponse {
@@ -147,7 +147,7 @@ pub struct ImportFileResponse {
     pub document_name: Option<String>,
 }
 
-/// Response for uploading a file into a FileSearchStore.
+/// Response for uploading a file into a `FileSearchStore`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadToFileSearchStoreResponse {

@@ -220,7 +220,7 @@ pub struct AuthConfig {
     pub oidc_config: Option<AuthConfigOidcConfig>,
 }
 
-/// ElasticSearch 参数。
+/// `ElasticSearch` 参数。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalApiElasticSearchParams {
@@ -435,7 +435,7 @@ pub struct RetrievalConfig {
     pub language_code: Option<String>,
 }
 
-/// OpenAPI Schema（精简实现）。
+/// `OpenAPI` Schema（精简实现）。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Schema {
@@ -506,42 +506,48 @@ mod schema_builder_tests {
 
 impl Schema {
     /// 创建对象 Schema builder。
+    #[must_use]
     pub fn object() -> SchemaBuilder {
         SchemaBuilder::new(Type::Object)
     }
 
     /// 创建数组 Schema builder。
+    #[must_use]
     pub fn array() -> SchemaBuilder {
         SchemaBuilder::new(Type::Array)
     }
 
     /// 创建字符串 Schema。
+    #[must_use]
     pub fn string() -> Self {
-        Schema {
+        Self {
             ty: Some(Type::String),
             ..Default::default()
         }
     }
 
     /// 创建整数 Schema。
+    #[must_use]
     pub fn integer() -> Self {
-        Schema {
+        Self {
             ty: Some(Type::Integer),
             ..Default::default()
         }
     }
 
     /// 创建数字 Schema。
+    #[must_use]
     pub fn number() -> Self {
-        Schema {
+        Self {
             ty: Some(Type::Number),
             ..Default::default()
         }
     }
 
     /// 创建布尔 Schema。
+    #[must_use]
     pub fn boolean() -> Self {
-        Schema {
+        Self {
             ty: Some(Type::Boolean),
             ..Default::default()
         }
@@ -554,6 +560,7 @@ pub struct SchemaBuilder {
 
 impl SchemaBuilder {
     /// 创建 Schema builder。
+    #[must_use]
     pub fn new(ty: Type) -> Self {
         Self {
             schema: Schema {
@@ -564,12 +571,14 @@ impl SchemaBuilder {
     }
 
     /// 设置描述。
+    #[must_use]
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.schema.description = Some(description.into());
         self
     }
 
     /// 添加字段。
+    #[must_use]
     pub fn property(mut self, name: impl Into<String>, schema: Schema) -> Self {
         let properties = self.schema.properties.get_or_insert_with(HashMap::new);
         properties.insert(name.into(), Box::new(schema));
@@ -577,6 +586,7 @@ impl SchemaBuilder {
     }
 
     /// 标记必填字段。
+    #[must_use]
     pub fn required(mut self, name: impl Into<String>) -> Self {
         let required = self.schema.required.get_or_insert_with(Vec::new);
         required.push(name.into());
@@ -584,18 +594,21 @@ impl SchemaBuilder {
     }
 
     /// 设置数组元素 Schema。
+    #[must_use]
     pub fn items(mut self, schema: Schema) -> Self {
         self.schema.items = Some(Box::new(schema));
         self
     }
 
     /// 设置枚举值。
+    #[must_use]
     pub fn enum_values(mut self, values: Vec<String>) -> Self {
         self.schema.enum_values = Some(values);
         self
     }
 
     /// 构建 Schema。
+    #[must_use]
     pub fn build(self) -> Schema {
         self.schema
     }
@@ -613,5 +626,42 @@ mod tests {
             .build();
         assert_eq!(schema.ty, Some(Type::Object));
         assert!(schema.properties.unwrap().contains_key("name"));
+    }
+
+    #[test]
+    fn schema_builder_array_and_enum() {
+        let schema = Schema::array()
+            .items(Schema::string())
+            .enum_values(vec!["a".into(), "b".into()])
+            .build();
+        assert_eq!(schema.ty, Some(Type::Array));
+        assert_eq!(schema.items.unwrap().ty, Some(Type::String));
+        assert_eq!(
+            schema.enum_values.unwrap(),
+            vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn tool_function_declaration_serialization() {
+        let declaration = FunctionDeclaration {
+            name: "lookup".to_string(),
+            description: Some("search".to_string()),
+            parameters: Some(Schema::object().property("q", Schema::string()).build()),
+            parameters_json_schema: None,
+            response: Some(Schema::string()),
+            response_json_schema: None,
+            behavior: None,
+        };
+        let tool = Tool {
+            function_declarations: Some(vec![declaration]),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&tool).unwrap();
+        assert!(json["functionDeclarations"].is_array());
+        assert_eq!(
+            json["functionDeclarations"][0]["name"].as_str(),
+            Some("lookup")
+        );
     }
 }

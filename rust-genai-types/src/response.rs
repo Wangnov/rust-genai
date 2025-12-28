@@ -30,15 +30,17 @@ pub struct GenerateContentResponse {
 
 impl GenerateContentResponse {
     /// 提取第一个候选的文本。
+    #[must_use]
     pub fn text(&self) -> Option<String> {
         self.candidates
             .first()
             .and_then(|candidate| candidate.content.as_ref())
             .and_then(|content| content.first_text())
-            .map(|text| text.to_string())
+            .map(ToString::to_string)
     }
 
     /// 提取所有函数调用。
+    #[must_use]
     pub fn function_calls(&self) -> Vec<&FunctionCall> {
         let mut calls = Vec::new();
         for candidate in &self.candidates {
@@ -150,7 +152,7 @@ pub struct UsageMetadata {
     pub traffic_type: Option<TrafficType>,
 }
 
-/// GenerateContentResponse 使用的 usage metadata（包含 candidates 统计）。
+/// `GenerateContentResponse` 使用的 usage metadata（包含 candidates 统计）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentResponseUsageMetadata {
@@ -213,8 +215,7 @@ mod tests {
             partial_args: None,
             will_continue: None,
         };
-        let call_content =
-            Content::from_parts(vec![Part::function_call(call.clone())], Role::Model);
+        let call_content = Content::from_parts(vec![Part::function_call(call)], Role::Model);
 
         let response = GenerateContentResponse {
             candidates: vec![

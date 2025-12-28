@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
-
 use crate::base64_serde;
+use serde::{Deserialize, Serialize};
 
 /// 引用日期。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,24 +154,22 @@ pub enum GroundingChunk {
 
 impl GroundingChunk {
     /// 获取来源 URI（如果存在）。
+    #[must_use]
     pub fn uri(&self) -> Option<&str> {
         match self {
-            GroundingChunk::Web { web } => Some(web.uri.as_str()),
-            GroundingChunk::Maps { maps } => Some(maps.uri.as_str()),
-            GroundingChunk::RetrievedContext { retrieved_context } => {
-                retrieved_context.uri.as_deref()
-            }
+            Self::Web { web } => Some(web.uri.as_str()),
+            Self::Maps { maps } => Some(maps.uri.as_str()),
+            Self::RetrievedContext { retrieved_context } => retrieved_context.uri.as_deref(),
         }
     }
 
     /// 获取标题（如果存在）。
+    #[must_use]
     pub fn title(&self) -> Option<&str> {
         match self {
-            GroundingChunk::Web { web } => Some(web.title.as_str()),
-            GroundingChunk::Maps { maps } => Some(maps.title.as_str()),
-            GroundingChunk::RetrievedContext { retrieved_context } => {
-                retrieved_context.title.as_deref()
-            }
+            Self::Web { web } => Some(web.title.as_str()),
+            Self::Maps { maps } => Some(maps.title.as_str()),
+            Self::RetrievedContext { retrieved_context } => retrieved_context.title.as_deref(),
         }
     }
 }
@@ -253,7 +250,8 @@ pub struct GroundingMetadata {
 }
 
 impl GroundingMetadata {
-    /// 生成带内联引用的文本（使用 grounding_supports 的 segment.end_index 位置插入引用序号）。
+    /// 生成带内联引用的文本（使用 `grounding_supports` 的 `segment.end_index` 位置插入引用序号）。
+    #[must_use]
     pub fn add_citations(&self, text: &str) -> String {
         if self.grounding_supports.is_empty() {
             return text.to_string();
@@ -263,13 +261,11 @@ impl GroundingMetadata {
             std::collections::BTreeMap::<usize, std::collections::BTreeSet<i32>>::new();
 
         for support in &self.grounding_supports {
-            let end_index = match usize::try_from(support.segment.end_index) {
-                Ok(value) => value,
-                Err(_) => continue,
+            let Ok(end_index) = usize::try_from(support.segment.end_index) else {
+                continue;
             };
-            let byte_end = match char_index_to_byte(text, end_index) {
-                Some(value) => value,
-                None => continue,
+            let Some(byte_end) = char_index_to_byte(text, end_index) else {
+                continue;
             };
 
             let entry = positions.entry(byte_end).or_default();
@@ -296,13 +292,14 @@ impl GroundingMetadata {
                 .map(|value| value.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            output.insert_str(pos, &format!(" [{}]", label));
+            output.insert_str(pos, &format!(" [{label}]"));
         }
 
         output
     }
 
-    /// 提取引用链接（按照 grounding_chunks 顺序去重）。
+    /// 提取引用链接（按照 `grounding_chunks` 顺序去重）。
+    #[must_use]
     pub fn citation_uris(&self) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
         let mut uris = Vec::new();
@@ -345,3 +342,97 @@ pub type GroundingChunkMapsPlaceAnswerSourcesAuthorAttribution =
 pub type GroundingChunkMaps = MapsChunk;
 pub type GroundingChunkRetrievedContext = RetrievedContextChunk;
 pub type GroundingChunkWeb = WebChunk;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn grounding_chunk_uri_and_title() {
+        let web = GroundingChunk::Web {
+            web: WebChunk {
+                uri: "https://example.com".to_string(),
+                title: "Example".to_string(),
+            },
+        };
+        let maps = GroundingChunk::Maps {
+            maps: MapsChunk {
+                uri: "https://maps.example.com".to_string(),
+                title: "Map".to_string(),
+                text: "info".to_string(),
+                place_id: "place-1".to_string(),
+                place_answer_sources: None,
+            },
+        };
+        let retrieved = GroundingChunk::RetrievedContext {
+            retrieved_context: RetrievedContextChunk {
+                document_name: None,
+                rag_chunk: None,
+                text: None,
+                title: Some("Doc".to_string()),
+                uri: Some("https://doc.example.com".to_string()),
+            },
+        };
+
+        assert_eq!(web.uri(), Some("https://example.com"));
+        assert_eq!(maps.title(), Some("Map"));
+        assert_eq!(retrieved.uri(), Some("https://doc.example.com"));
+        assert_eq!(retrieved.title(), Some("Doc"));
+    }
+
+    #[test]
+    fn search_entry_point_base64_roundtrip() {
+        let entry = SearchEntryPoint {
+            rendered_content: Some("rendered".to_string()),
+            sdk_blob: Some(vec![1, 2, 3]),
+        };
+        let value = serde_json::to_value(&entry).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "renderedContent": "rendered",
+                "sdkBlob": "AQID"
+            })
+        );
+
+        let decoded: SearchEntryPoint = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.sdk_blob, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn grounding_metadata_add_citations_and_uris() {
+        let metadata = GroundingMetadata {
+            grounding_chunks: vec![
+                GroundingChunk::Web {
+                    web: WebChunk {
+                        uri: "https://a.example".to_string(),
+                        title: "A".to_string(),
+                    },
+                },
+                GroundingChunk::Web {
+                    web: WebChunk {
+                        uri: "https://b.example".to_string(),
+                        title: "B".to_string(),
+                    },
+                },
+            ],
+            grounding_supports: vec![GroundingSupport {
+                grounding_chunk_indices: vec![0, 1],
+                confidence_scores: vec![0.9],
+                segment: Segment {
+                    part_index: 0,
+                    start_index: 0,
+                    end_index: 2,
+                    text: "hi".to_string(),
+                },
+            }],
+            ..Default::default()
+        };
+
+        let cited = metadata.add_citations("hi!");
+        assert_eq!(cited, "hi [1,2]!");
+        let uris = metadata.citation_uris();
+        assert_eq!(uris, vec!["https://a.example", "https://b.example"]);
+    }
+}

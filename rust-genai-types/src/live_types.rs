@@ -261,7 +261,7 @@ pub struct LiveClientRealtimeInput {
     pub activity_end: Option<ActivityEnd>,
 }
 
-/// Client generated response to a ToolCall received from the server.
+/// Client generated response to a `ToolCall` received from the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveClientToolResponse {

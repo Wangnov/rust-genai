@@ -112,9 +112,9 @@ pub enum Modality {
 /// The media resolution to use.
 ///
 /// 参考 token 映射（不同媒体类型不同）：
-/// - 图像: LOW/MEDIUM/HIGH/ULTRA_HIGH ≈ 280/560/1120/2240 tokens
-/// - 视频: LOW/MEDIUM/HIGH ≈ 70/70/280 tokens per frame
-/// - PDF: LOW/MEDIUM/HIGH ≈ 280/560/1120 tokens + 原生文本（Gemini 3）
+/// - 图像: `LOW/MEDIUM/HIGH/ULTRA_HIGH` ≈ 280/560/1120/2240 tokens
+/// - 视频: `LOW/MEDIUM/HIGH` ≈ 70/70/280 tokens per frame
+/// - PDF: `LOW/MEDIUM/HIGH` ≈ 280/560/1120 tokens + 原生文本（Gemini 3）
 ///
 /// 实际计费与限制以服务端为准。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -490,7 +490,7 @@ pub enum TurnCompleteReason {
     NeedMoreInput,
 }
 
-/// Dynamic retrieval mode for GoogleSearchRetrieval.
+/// Dynamic retrieval mode for `GoogleSearchRetrieval`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DynamicRetrievalConfigMode {

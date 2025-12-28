@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-
 use crate::base64_serde;
 use crate::config::{GenerationConfig, SafetySetting};
 use crate::content::Content;
@@ -12,8 +10,9 @@ use crate::enums::{
 };
 use crate::http::HttpOptions;
 use crate::tool::{Tool, ToolConfig};
+use serde::{Deserialize, Serialize};
 
-/// GenerateContent 请求配置。
+/// `GenerateContent` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentConfig {
@@ -36,7 +35,7 @@ pub struct GenerateContentConfig {
     pub labels: Option<HashMap<String, String>>,
 }
 
-/// GenerateContent 请求体。
+/// `GenerateContent` 请求体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentRequest {
@@ -72,7 +71,7 @@ pub struct AutomaticFunctionCallingConfig {
     pub ignore_call_history: Option<bool>,
 }
 
-/// CountTokens 请求配置。
+/// `CountTokens` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensConfig {
@@ -84,7 +83,7 @@ pub struct CountTokensConfig {
     pub generation_config: Option<GenerationConfig>,
 }
 
-/// CountTokens 请求体。
+/// `CountTokens` 请求体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensRequest {
@@ -97,7 +96,7 @@ pub struct CountTokensRequest {
     pub generation_config: Option<GenerationConfig>,
 }
 
-/// CountTokens 响应体。
+/// `CountTokens` 响应体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensResponse {
@@ -107,7 +106,7 @@ pub struct CountTokensResponse {
     pub cached_content_token_count: Option<i32>,
 }
 
-/// ComputeTokens 请求配置。
+/// `ComputeTokens` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputeTokensConfig {
@@ -116,7 +115,7 @@ pub struct ComputeTokensConfig {
     pub http_options: Option<HttpOptions>,
 }
 
-/// ComputeTokens 请求体。
+/// `ComputeTokens` 请求体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputeTokensRequest {
@@ -147,7 +146,7 @@ pub struct ComputeTokensResponse {
     pub tokens_info: Option<Vec<TokensInfo>>,
 }
 
-/// EmbedContent 配置。
+/// `EmbedContent` 配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbedContentConfig {
@@ -183,7 +182,7 @@ pub struct ContentEmbedding {
     pub statistics: Option<ContentEmbeddingStatistics>,
 }
 
-/// EmbedContent 元数据。
+/// `EmbedContent` 元数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbedContentMetadata {
@@ -191,7 +190,7 @@ pub struct EmbedContentMetadata {
     pub billable_character_count: Option<i32>,
 }
 
-/// EmbedContent 响应。
+/// `EmbedContent` 响应。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbedContentResponse {
@@ -221,7 +220,7 @@ pub struct Model {
     pub labels: Option<HashMap<String, String>>,
 }
 
-/// ListModels 请求配置。
+/// `ListModels` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListModelsConfig {
@@ -235,7 +234,7 @@ pub struct ListModelsConfig {
     pub query_base: Option<bool>,
 }
 
-/// ListModels 响应体。
+/// `ListModels` 响应体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListModelsResponse {
@@ -245,7 +244,7 @@ pub struct ListModelsResponse {
     pub next_page_token: Option<String>,
 }
 
-/// UpdateModel 请求配置。
+/// `UpdateModel` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateModelConfig {
@@ -260,7 +259,7 @@ pub struct UpdateModelConfig {
     pub default_checkpoint_id: Option<String>,
 }
 
-/// DeleteModel 请求配置。
+/// `DeleteModel` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteModelConfig {
@@ -269,7 +268,7 @@ pub struct DeleteModelConfig {
     pub http_options: Option<HttpOptions>,
 }
 
-/// DeleteModel 响应体（空响应）。
+/// `DeleteModel` 响应体（空响应）。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteModelResponse {}
@@ -326,8 +325,8 @@ pub struct Image {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "base64_serde::option",
-        rename = "bytesBase64Encoded"
+        rename = "bytesBase64Encoded",
+        with = "base64_serde::option"
     )]
     pub image_bytes: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -657,8 +656,8 @@ pub struct Video {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "base64_serde::option",
-        rename = "bytesBase64Encoded"
+        rename = "bytesBase64Encoded",
+        with = "base64_serde::option"
     )]
     pub video_bytes: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]

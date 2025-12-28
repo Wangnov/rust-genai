@@ -1,8 +1,7 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 use crate::base64_serde;
 use crate::enums::{FunctionResponseScheduling, Language, Outcome, PartMediaResolutionLevel};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[cfg(feature = "mcp")]
 use rmcp::model::CallToolResult;
@@ -36,7 +35,8 @@ impl Content {
     }
 
     /// 从 parts 构建内容。
-    pub fn from_parts(parts: Vec<Part>, role: Role) -> Self {
+    #[must_use]
+    pub const fn from_parts(parts: Vec<Part>, role: Role) -> Self {
         Self {
             role: Some(role),
             parts,
@@ -44,6 +44,7 @@ impl Content {
     }
 
     /// 提取第一段文本。
+    #[must_use]
     pub fn first_text(&self) -> Option<&str> {
         self.parts.iter().find_map(|part| part.text_value())
     }
@@ -137,7 +138,8 @@ impl Part {
     }
 
     /// 创建函数调用 Part。
-    pub fn function_call(function_call: FunctionCall) -> Self {
+    #[must_use]
+    pub const fn function_call(function_call: FunctionCall) -> Self {
         Self {
             kind: PartKind::FunctionCall { function_call },
             thought: None,
@@ -148,7 +150,8 @@ impl Part {
     }
 
     /// 创建函数响应 Part。
-    pub fn function_response(function_response: FunctionResponse) -> Self {
+    #[must_use]
+    pub const fn function_response(function_response: FunctionResponse) -> Self {
         Self {
             kind: PartKind::FunctionResponse { function_response },
             thought: None,
@@ -191,39 +194,45 @@ impl Part {
     }
 
     /// 设置是否为思考内容。
-    pub fn with_thought(mut self, thought: bool) -> Self {
+    #[must_use]
+    pub const fn with_thought(mut self, thought: bool) -> Self {
         self.thought = Some(thought);
         self
     }
 
     /// 设置 thought signature。
+    #[must_use]
     pub fn with_thought_signature(mut self, signature: Vec<u8>) -> Self {
         self.thought_signature = Some(signature);
         self
     }
 
     /// 设置媒体分辨率。
-    pub fn with_media_resolution(mut self, resolution: PartMediaResolution) -> Self {
+    #[must_use]
+    pub const fn with_media_resolution(mut self, resolution: PartMediaResolution) -> Self {
         self.media_resolution = Some(resolution);
         self
     }
 
     /// 设置视频元数据。
+    #[must_use]
     pub fn with_video_metadata(mut self, metadata: VideoMetadata) -> Self {
         self.video_metadata = Some(metadata);
         self
     }
 
     /// 获取文本内容（仅当为 Text Part）。
-    pub fn text_value(&self) -> Option<&str> {
+    #[must_use]
+    pub const fn text_value(&self) -> Option<&str> {
         match &self.kind {
             PartKind::Text { text } => Some(text.as_str()),
             _ => None,
         }
     }
 
-    /// 获取函数调用引用（仅当为 FunctionCall Part）。
-    pub fn function_call_ref(&self) -> Option<&FunctionCall> {
+    /// 获取函数调用引用（仅当为 `FunctionCall` Part）。
+    #[must_use]
+    pub const fn function_call_ref(&self) -> Option<&FunctionCall> {
         match &self.kind {
             PartKind::FunctionCall { function_call } => Some(function_call),
             _ => None,
@@ -379,7 +388,10 @@ pub struct FunctionResponse {
 }
 
 impl FunctionResponse {
-    /// 从 MCP CallToolResult 构造 FunctionResponse（需要启用 `mcp` feature）。
+    /// 从 MCP `CallToolResult` 构造 FunctionResponse（需要启用 `mcp` feature）。
+    ///
+    /// # Errors
+    /// 当序列化 MCP 响应失败时返回错误。
     #[cfg(feature = "mcp")]
     pub fn from_mcp_response(
         name: impl Into<String>,
@@ -438,6 +450,75 @@ pub struct VideoMetadata {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn content_first_text_skips_non_text() {
+        let content = Content::from_parts(
+            vec![
+                Part::inline_data(vec![1, 2, 3], "image/png"),
+                Part::text("first"),
+                Part::text("second"),
+            ],
+            Role::User,
+        );
+        assert_eq!(content.first_text(), Some("first"));
+    }
+
+    #[test]
+    fn part_builders_and_accessors() {
+        let call = FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: Some(json!({"q": "rust"})),
+            partial_args: None,
+            will_continue: None,
+        };
+        let response = FunctionResponse {
+            will_continue: None,
+            scheduling: None,
+            parts: None,
+            id: Some("resp-1".into()),
+            name: Some("lookup".into()),
+            response: Some(json!({"ok": true})),
+        };
+        let metadata = VideoMetadata {
+            start_offset: Some("0s".into()),
+            end_offset: Some("1s".into()),
+            fps: Some(30.0),
+        };
+
+        let part = Part::text("hello")
+            .with_thought(true)
+            .with_thought_signature(vec![1, 2, 3])
+            .with_media_resolution(PartMediaResolution {
+                level: Some(PartMediaResolutionLevel::MediaResolutionLow),
+                num_tokens: None,
+            })
+            .with_video_metadata(metadata);
+        assert_eq!(part.text_value(), Some("hello"));
+
+        let call_part = Part::function_call(call);
+        assert_eq!(
+            call_part.function_call_ref().unwrap().name.as_deref(),
+            Some("lookup")
+        );
+
+        let response_part = Part::function_response(response);
+        let json = serde_json::to_value(&response_part).unwrap();
+        assert!(json.get("functionResponse").is_some());
+
+        let exec_part = Part::executable_code("print('hi')", Language::Python);
+        let exec_json = serde_json::to_value(&exec_part).unwrap();
+        assert_eq!(exec_json["executableCode"]["language"], "PYTHON");
+
+        let result_part = Part::code_execution_result(Outcome::OutcomeOk, "ok");
+        let result_json = serde_json::to_value(&result_part).unwrap();
+        assert_eq!(result_json["codeExecutionResult"]["outcome"], "OUTCOME_OK");
+
+        let file_part = Part::file_data("files/abc", "application/pdf");
+        let file_json = serde_json::to_value(&file_part).unwrap();
+        assert_eq!(file_json["fileData"]["mimeType"], "application/pdf");
+    }
 
     #[test]
     fn content_roundtrip() {

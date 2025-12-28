@@ -1,7 +1,6 @@
 //! Shared types for the Rust Gemini SDK.
 
-mod base64_serde;
-
+pub mod base64_serde;
 pub mod batches;
 pub mod caches;
 pub mod config;

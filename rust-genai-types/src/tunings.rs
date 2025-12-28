@@ -120,7 +120,7 @@ pub struct CancelTuningJobConfig {
     pub http_options: Option<HttpOptions>,
 }
 
-/// TunedModel checkpoint.
+/// `TunedModel` checkpoint.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TunedModelCheckpoint {
@@ -134,7 +134,7 @@ pub struct TunedModelCheckpoint {
     pub endpoint: Option<String>,
 }
 
-/// TunedModel for the tuning job result.
+/// `TunedModel` for the tuning job result.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TunedModel {
