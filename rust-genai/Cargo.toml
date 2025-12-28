@@ -41,3 +41,4 @@ mcp = ["dep:rmcp", "rust-genai-types/mcp"]
 [dev-dependencies]
 wiremock = "0.6"
 criterion = "0.8"
+tempfile = "3"
