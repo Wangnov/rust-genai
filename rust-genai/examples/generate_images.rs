@@ -55,8 +55,7 @@ async fn main() -> rust_genai::Result<()> {
         let ext = image
             .mime_type
             .as_deref()
-            .map(extension_from_mime)
-            .unwrap_or("png");
+            .map_or("png", extension_from_mime);
         let filename = output_dir.join(format!("generated_image_{idx}.{ext}"));
         std::fs::write(&filename, bytes)?;
         println!(

@@ -27,23 +27,19 @@ async fn main() -> rust_genai::Result<()> {
         ..Default::default()
     }];
 
-    let image_path = match std::env::var("GENAI_IMAGE_PATH") {
-        Ok(value) => value,
-        Err(_) => {
-            eprintln!("请设置 GENAI_IMAGE_PATH 指向本地图片文件。");
-            return Ok(());
-        }
+    let Ok(image_path) = std::env::var("GENAI_IMAGE_PATH") else {
+        eprintln!("请设置 GENAI_IMAGE_PATH 指向本地图片文件。");
+        return Ok(());
     };
     let image_path = Path::new(&image_path);
-    let mime_type = match std::env::var("GENAI_IMAGE_MIME") {
-        Ok(value) => value,
-        Err(_) => match guess_mime_type(image_path) {
-            Some(value) => value.to_string(),
-            None => {
-                eprintln!("无法推断图片 MIME，请设置 GENAI_IMAGE_MIME（如 image/png）。");
-                return Ok(());
-            }
-        },
+    let mime_type = if let Ok(value) = std::env::var("GENAI_IMAGE_MIME") {
+        value
+    } else {
+        let Some(value) = guess_mime_type(image_path) else {
+            eprintln!("无法推断图片 MIME，请设置 GENAI_IMAGE_MIME（如 image/png）。");
+            return Ok(());
+        };
+        value.to_string()
     };
     let image_bytes = std::fs::read(image_path)?;
     let image_part = Part::inline_data(image_bytes, mime_type);

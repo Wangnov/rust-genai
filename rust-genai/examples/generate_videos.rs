@@ -68,7 +68,7 @@ async fn main() -> rust_genai::Result<()> {
 
     let operation = client.operations().wait(operation).await?;
     if let Some(error) = operation.error {
-        eprintln!("video generation failed: {:?}", error);
+        eprintln!("video generation failed: {error:?}");
         return Ok(());
     }
     let Some(response_value) = operation.response else {

@@ -11,10 +11,28 @@ use std::io::{Seek, SeekFrom, Write};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    run().await
+}
+
+async fn run() -> Result<()> {
     let client = Client::from_env()?;
     let model = "gemini-2.5-flash-native-audio-preview-12-2025";
+    let config = build_live_config()?;
 
-    // 定义天气查询函数
+    println!("连接 Live API 中... (model={model})");
+    let mut session = client.live().connect(model, config).await?;
+
+    println!("连接成功。发送请求...");
+    send_weather_prompt(&session).await?;
+
+    println!("请求已发送，等待响应...");
+    handle_session(&mut session).await?;
+
+    session.close().await?;
+    Ok(())
+}
+
+fn build_live_config() -> Result<LiveConnectConfig> {
     let get_weather = json!({
         "name": "get_weather",
         "description": "Get the current weather for a city",
@@ -35,20 +53,15 @@ async fn main() -> Result<()> {
         "functionDeclarations": [get_weather]
     }]);
 
-    // 使用 native audio 模型配置
-    let config = LiveConnectConfig {
+    Ok(LiveConnectConfig {
         response_modalities: Some(vec![Modality::Audio]),
         output_audio_transcription: Some(AudioTranscriptionConfig::default()),
         tools: Some(serde_json::from_value(tools)?),
         ..Default::default()
-    };
+    })
+}
 
-    println!("连接 Live API 中... (model={})", model);
-    let mut session = client.live().connect(model, config).await?;
-
-    println!("连接成功。发送请求...");
-
-    //发送天气查询请求
+async fn send_weather_prompt(session: &rust_genai::live::LiveSession) -> Result<()> {
     let prompt = "What's the weather like in Beijing?";
     session
         .send_client_content(LiveSendClientContentParameters {
@@ -58,28 +71,21 @@ async fn main() -> Result<()> {
             }]),
             turn_complete: Some(true),
         })
-        .await?;
+        .await
+}
 
-    println!("请求已发送，等待响应...");
-
-    let mut text_started = false;
-    let mut last_char: Option<char> = None;
+async fn handle_session(session: &mut rust_genai::live::LiveSession) -> Result<()> {
+    let mut state = SessionState::new();
     let audio_out_path = std::env::var("GENAI_AUDIO_OUT_PATH").ok();
-    let mut wav_writer: Option<WavWriter> = None;
     let deadline = std::time::Duration::from_secs(30);
 
     loop {
-        let receive_result = tokio::time::timeout(deadline, session.receive()).await;
-
-        let message = match receive_result {
+        let message = match tokio::time::timeout(deadline, session.receive()).await {
             Ok(Some(msg)) => {
                 let msg = msg?;
-
-                // 只在有 tool_call 时打印提示
                 if msg.tool_call.is_some() {
-                    println!(); // 换行让输出更清晰
+                    println!();
                 }
-
                 msg
             }
             Ok(None) => {
@@ -92,141 +98,176 @@ async fn main() -> Result<()> {
             }
         };
 
-        // 处理 function call
         if let Some(tool_call) = message.tool_call.as_ref() {
-            let responses = tool_call
-                .function_calls
-                .as_ref()
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|call| {
-                    let func_name = call.name.as_deref().unwrap_or("unknown");
-                    let args_str = serde_json::to_string(&call.args).unwrap_or_default();
-                    println!("[function_call] {}({})", func_name, args_str);
-                    FunctionResponse {
-                        will_continue: None,
-                        scheduling: None,
-                        parts: None,
-                        id: call.id.clone(),
-                        name: call.name.clone(),
-                        response: Some(json!({"temperature": "20C", "condition": "sunny"})),
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            session
-                .send_tool_response(LiveSendToolResponseParameters {
-                    function_responses: Some(responses),
-                })
-                .await?;
+            handle_tool_calls(session, tool_call).await?;
         }
 
-        // 显示输出转写
-        if let Some(transcription) = message
-            .server_content
-            .as_ref()
+        let server_content = message.server_content.as_ref();
+        let has_transcription = server_content
             .and_then(|c| c.output_transcription.as_ref())
-        {
-            if let Some(text) = transcription.text.as_deref() {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    if !text_started {
-                        print!("assistant: ");
-                        text_started = true;
-                    } else if let Some(first_char) = trimmed.chars().next() {
-                        if text.starts_with(char::is_whitespace)
-                            && needs_space_before(last_char, first_char)
-                        {
-                            print!(" ");
-                        }
-                    }
-                    print!("{}", trimmed);
-                    std::io::stdout().flush().ok();
-                    last_char = trimmed.chars().last();
-                }
-            }
-        }
+            .is_some();
+        handle_transcription(server_content, &mut state);
+        handle_model_turn(
+            server_content,
+            &mut state,
+            audio_out_path.as_deref(),
+            has_transcription,
+        )?;
 
-        // 处理模型响应 - 流式输出文本和音频
-        if let Some(content) = message
-            .server_content
-            .as_ref()
-            .and_then(|c| c.model_turn.as_ref())
-        {
-            for part in &content.parts {
-                if part.thought.unwrap_or(false) {
-                    continue;
-                }
-                match &part.kind {
-                    rust_genai::types::content::PartKind::Text { text } => {
-                        // 如果已经有转写输出，就不显示文本了（避免重复）
-                        if message
-                            .server_content
-                            .as_ref()
-                            .and_then(|c| c.output_transcription.as_ref())
-                            .is_none()
-                        {
-                            let trimmed = text.trim();
-                            if !trimmed.is_empty() {
-                                if !text_started {
-                                    print!("assistant: ");
-                                    text_started = true;
-                                } else if let Some(first_char) = trimmed.chars().next() {
-                                    if text.starts_with(char::is_whitespace)
-                                        && needs_space_before(last_char, first_char)
-                                    {
-                                        print!(" ");
-                                    }
-                                }
-                                print!("{}", trimmed);
-                                std::io::stdout().flush().ok();
-                                last_char = trimmed.chars().last();
-                            }
-                        }
-                    }
-                    rust_genai::types::content::PartKind::InlineData { inline_data } => {
-                        // 保存音频（使用 WavWriter）
-                        if inline_data.mime_type.starts_with("audio/") {
-                            if let Some(path) = audio_out_path.as_ref() {
-                                let rate =
-                                    parse_sample_rate(&inline_data.mime_type).unwrap_or(24_000);
-                                if wav_writer.is_none() {
-                                    let writer = WavWriter::create(path, rate)?;
-                                    wav_writer = Some(writer);
-                                }
-                                if let Some(writer) = wav_writer.as_mut() {
-                                    writer.write_chunk(&inline_data.data)?;
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // 检查是否完成
-        if message
-            .server_content
-            .as_ref()
+        if server_content
             .and_then(|c| c.turn_complete)
             .unwrap_or(false)
         {
-            if text_started {
-                println!();
-            }
-            if let Some(writer) = wav_writer.as_mut() {
-                writer.update_header()?;
-                if let Some(path) = audio_out_path.as_ref() {
-                    println!("[audio] 已保存到 {} (rate={}Hz)", path, writer.sample_rate);
-                }
-            }
+            finalize_turn(&mut state, audio_out_path.as_deref())?;
             break;
         }
     }
 
-    session.close().await?;
     Ok(())
+}
+
+async fn handle_tool_calls(
+    session: &rust_genai::live::LiveSession,
+    tool_call: &rust_genai::types::live_types::LiveServerToolCall,
+) -> Result<()> {
+    let Some(function_calls) = tool_call.function_calls.as_ref() else {
+        return Ok(());
+    };
+    if function_calls.is_empty() {
+        return Ok(());
+    }
+    let responses = function_calls
+        .iter()
+        .map(|call| {
+            let func_name = call.name.as_deref().unwrap_or("unknown");
+            let args_str = serde_json::to_string(&call.args).unwrap_or_default();
+            println!("[function_call] {func_name}({args_str})");
+            FunctionResponse {
+                will_continue: None,
+                scheduling: None,
+                parts: None,
+                id: call.id.clone(),
+                name: call.name.clone(),
+                response: Some(json!({"temperature": "20C", "condition": "sunny"})),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    session
+        .send_tool_response(LiveSendToolResponseParameters {
+            function_responses: Some(responses),
+        })
+        .await
+}
+
+fn handle_transcription(
+    server_content: Option<&rust_genai::types::live_types::LiveServerContent>,
+    state: &mut SessionState,
+) {
+    if let Some(text) = server_content
+        .and_then(|content| content.output_transcription.as_ref())
+        .and_then(|transcription| transcription.text.as_deref())
+    {
+        emit_text(text, state);
+    }
+}
+
+fn handle_model_turn(
+    server_content: Option<&rust_genai::types::live_types::LiveServerContent>,
+    state: &mut SessionState,
+    audio_out_path: Option<&str>,
+    has_transcription: bool,
+) -> Result<()> {
+    let Some(content) = server_content.and_then(|content| content.model_turn.as_ref()) else {
+        return Ok(());
+    };
+    for part in &content.parts {
+        if part.thought.unwrap_or(false) {
+            continue;
+        }
+        match &part.kind {
+            rust_genai::types::content::PartKind::Text { text } => {
+                if !has_transcription {
+                    emit_text(text, state);
+                }
+            }
+            rust_genai::types::content::PartKind::InlineData { inline_data } => {
+                handle_inline_data(inline_data, state, audio_out_path)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn handle_inline_data(
+    inline_data: &rust_genai::types::content::Blob,
+    state: &mut SessionState,
+    audio_out_path: Option<&str>,
+) -> Result<()> {
+    if !inline_data.mime_type.starts_with("audio/") {
+        return Ok(());
+    }
+    let Some(path) = audio_out_path else {
+        return Ok(());
+    };
+    let rate = parse_sample_rate(&inline_data.mime_type).unwrap_or(24_000);
+    if state.wav_writer.is_none() {
+        state.wav_writer = Some(WavWriter::create(path, rate)?);
+    }
+    if let Some(writer) = state.wav_writer.as_mut() {
+        writer.write_chunk(&inline_data.data)?;
+    }
+    Ok(())
+}
+
+fn finalize_turn(state: &mut SessionState, audio_out_path: Option<&str>) -> Result<()> {
+    if state.text_started {
+        println!();
+    }
+    if let Some(writer) = state.wav_writer.as_mut() {
+        writer.update_header()?;
+        if let Some(path) = audio_out_path {
+            let rate = writer.sample_rate;
+            println!("[audio] 已保存到 {path} (rate={rate}Hz)");
+        }
+    }
+    Ok(())
+}
+
+struct SessionState {
+    text_started: bool,
+    last_char: Option<char>,
+    wav_writer: Option<WavWriter>,
+}
+
+impl SessionState {
+    const fn new() -> Self {
+        Self {
+            text_started: false,
+            last_char: None,
+            wav_writer: None,
+        }
+    }
+}
+
+fn emit_text(text: &str, state: &mut SessionState) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if !state.text_started {
+        print!("assistant: ");
+        state.text_started = true;
+    } else if let Some(first_char) = trimmed.chars().next() {
+        if text.starts_with(char::is_whitespace) && needs_space_before(state.last_char, first_char)
+        {
+            print!(" ");
+        }
+    }
+    print!("{trimmed}");
+    std::io::stdout().flush().ok();
+    state.last_char = trimmed.chars().last();
 }
 
 fn parse_sample_rate(mime_type: &str) -> Option<u32> {
@@ -260,7 +301,11 @@ impl WavWriter {
 
     fn write_chunk(&mut self, data: &[u8]) -> rust_genai::Result<()> {
         self.file.write_all(data)?;
-        self.data_len = self.data_len.saturating_add(data.len() as u32);
+        let chunk_len =
+            u32::try_from(data.len()).map_err(|_| rust_genai::Error::InvalidConfig {
+                message: "audio chunk too large".into(),
+            })?;
+        self.data_len = self.data_len.saturating_add(chunk_len);
         Ok(())
     }
 

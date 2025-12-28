@@ -39,8 +39,8 @@ async fn main() -> rust_genai::Result<()> {
     while let Some(message) = session.receive().await {
         let message = message?;
         if let Some(chunk) = message.first_audio_chunk() {
-            let size = chunk.data.as_ref().map(|data| data.len()).unwrap_or(0);
-            println!("received audio chunk: {} bytes", size);
+            let size = chunk.data.as_ref().map_or(0, Vec::len);
+            println!("received audio chunk: {size} bytes");
         }
     }
 

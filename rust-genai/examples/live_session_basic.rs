@@ -44,7 +44,7 @@ async fn run() -> rust_genai::Result<()> {
     let mut session = client.live().connect(model, config).await?;
 
     println!("连接成功。示例将先发送一句话，然后进入交互模式。");
-    send_text_or_audio(&mut session, native_audio, "你好，Live API").await?;
+    send_text_or_audio(&session, native_audio, "你好，Live API").await?;
     receive_turn(&mut session, response_timeout_secs, native_audio).await?;
 
     println!("进入交互模式：输入内容回车发送，输入 /exit 退出。");
@@ -62,7 +62,7 @@ async fn run() -> rust_genai::Result<()> {
         if input == "/exit" {
             break;
         }
-        send_text_or_audio(&mut session, native_audio, input).await?;
+        send_text_or_audio(&session, native_audio, input).await?;
         receive_turn(&mut session, response_timeout_secs, native_audio).await?;
     }
 
@@ -71,7 +71,7 @@ async fn run() -> rust_genai::Result<()> {
 }
 
 async fn send_text_or_audio(
-    session: &mut rust_genai::live::LiveSession,
+    session: &rust_genai::live::LiveSession,
     native_audio: bool,
     text: &str,
 ) -> rust_genai::Result<()> {
@@ -119,11 +119,12 @@ async fn receive_turn(
     native_audio: bool,
 ) -> rust_genai::Result<()> {
     let audio_out_path = std::env::var("GENAI_AUDIO_OUT_PATH").ok();
-    let audio_verbose = env_flag("GENAI_AUDIO_VERBOSE");
-    let mut wav_writer: Option<WavWriter> = None;
-    let mut audio_saved_path: Option<(String, u32)> = None;
-    let mut text_started = false;
-    let mut last_char: Option<char> = None;
+    let config = ReceiveConfig {
+        audio_out_path: audio_out_path.as_deref(),
+        audio_verbose: env_flag("GENAI_AUDIO_VERBOSE"),
+        native_audio,
+    };
+    let mut state = ReceiveState::new();
     let deadline = std::time::Duration::from_secs(timeout_secs);
     loop {
         let response = tokio::time::timeout(deadline, session.receive())
@@ -135,140 +136,176 @@ async fn receive_turn(
             })?;
         let Some(message) = response else { break };
         let message = message?;
-        let server_content = message.server_content.as_ref();
-        if let Some(transcription) = server_content.and_then(|c| c.output_transcription.as_ref()) {
-            if let Some(text) = transcription.text.as_deref() {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    if !text_started {
-                        print!("assistant: ");
-                        text_started = true;
-                    } else if let Some(first_char) = trimmed.chars().next() {
-                        // 智能判断是否需要空格
-                        if text.starts_with(char::is_whitespace)
-                            && needs_space_before(last_char, first_char)
-                        {
-                            print!(" ");
-                        }
-                    }
-                    print!("{}", trimmed);
-                    std::io::stdout().flush().ok();
-                    last_char = trimmed.chars().last();
-                }
-            }
-        }
-        if let Some(content) = server_content.and_then(|c| c.model_turn.as_ref()) {
-            for part in &content.parts {
-                if part.thought.unwrap_or(false) {
-                    continue;
-                }
-                match &part.kind {
-                    rust_genai::types::content::PartKind::Text { text } => {
-                        if !native_audio {
-                            let trimmed = text.trim();
-                            if !trimmed.is_empty() {
-                                if !text_started {
-                                    print!("assistant: ");
-                                    text_started = true;
-                                } else if let Some(first_char) = trimmed.chars().next() {
-                                    // 智能判断是否需要空格
-                                    if text.starts_with(char::is_whitespace)
-                                        && needs_space_before(last_char, first_char)
-                                    {
-                                        print!(" ");
-                                    }
-                                }
-                                print!("{}", trimmed);
-                                std::io::stdout().flush().ok();
-                                last_char = trimmed.chars().last();
-                            }
-                        } else if audio_verbose {
-                            println!("assistant: {}", text);
-                        }
-                    }
-                    rust_genai::types::content::PartKind::InlineData { inline_data } => {
-                        if inline_data.mime_type.starts_with("audio/") {
-                            if let Some(path) = audio_out_path.as_ref() {
-                                let rate =
-                                    parse_sample_rate(&inline_data.mime_type).unwrap_or(24_000);
-                                if wav_writer.is_none() {
-                                    let writer = WavWriter::create(path, rate)?;
-                                    wav_writer = Some(writer);
-                                }
-                                if let Some(writer) = wav_writer.as_mut() {
-                                    if audio_saved_path.is_none() {
-                                        audio_saved_path = Some((path.clone(), writer.sample_rate));
-                                    }
-                                    writer.write_chunk(&inline_data.data)?;
-                                }
-                            }
-                            if audio_verbose {
-                                println!(
-                                    "assistant: [audio chunk] mime={} bytes={}",
-                                    inline_data.mime_type,
-                                    inline_data.data.len()
-                                );
-                            }
-                        } else if audio_verbose {
-                            println!(
-                                "assistant: [inline data] mime={} bytes={}",
-                                inline_data.mime_type,
-                                inline_data.data.len()
-                            );
-                        }
-                    }
-                    rust_genai::types::content::PartKind::FileData { file_data } => {
-                        if audio_verbose {
-                            println!(
-                                "assistant: [file] uri={} mime={}",
-                                file_data.file_uri, file_data.mime_type
-                            );
-                        }
-                    }
-                    rust_genai::types::content::PartKind::FunctionCall { function_call } => {
-                        if audio_verbose {
-                            println!("assistant: [function_call] {:?}", function_call);
-                        }
-                    }
-                    rust_genai::types::content::PartKind::FunctionResponse {
-                        function_response,
-                    } => {
-                        if audio_verbose {
-                            println!("assistant: [function_response] {:?}", function_response);
-                        }
-                    }
-                    rust_genai::types::content::PartKind::ExecutableCode { executable_code } => {
-                        if audio_verbose {
-                            println!("assistant: [code] {:?}", executable_code);
-                        }
-                    }
-                    rust_genai::types::content::PartKind::CodeExecutionResult {
-                        code_execution_result,
-                    } => {
-                        if audio_verbose {
-                            println!("assistant: [code_result] {:?}", code_execution_result);
-                        }
-                    }
-                }
-            }
-        }
-        if server_content
-            .and_then(|c| c.turn_complete)
-            .unwrap_or(false)
-        {
-            if text_started {
+        let Some(server_content) = message.server_content.as_ref() else {
+            continue;
+        };
+        handle_transcription(server_content, &mut state);
+        handle_model_turn(server_content, &mut state, &config)?;
+        if server_content.turn_complete.unwrap_or(false) {
+            if state.text_started {
                 println!();
             }
-            if let Some((path, rate)) = audio_saved_path.as_ref() {
-                println!("[audio] 已保存到 {} (rate={}Hz)", path, rate);
+            if let Some((path, rate)) = state.audio_saved_path.as_ref() {
+                println!("[audio] 已保存到 {path} (rate={rate}Hz)");
             }
-            if let Some(writer) = wav_writer.as_mut() {
+            if let Some(writer) = state.wav_writer.as_mut() {
                 writer.update_header()?;
             }
             break;
         }
     }
     Ok(())
+}
+
+struct ReceiveConfig<'a> {
+    audio_out_path: Option<&'a str>,
+    audio_verbose: bool,
+    native_audio: bool,
+}
+
+struct ReceiveState {
+    text_started: bool,
+    last_char: Option<char>,
+    wav_writer: Option<WavWriter>,
+    audio_saved_path: Option<(String, u32)>,
+}
+
+impl ReceiveState {
+    const fn new() -> Self {
+        Self {
+            text_started: false,
+            last_char: None,
+            wav_writer: None,
+            audio_saved_path: None,
+        }
+    }
+}
+
+fn handle_transcription(
+    server_content: &rust_genai::types::live_types::LiveServerContent,
+    state: &mut ReceiveState,
+) {
+    if let Some(text) = server_content
+        .output_transcription
+        .as_ref()
+        .and_then(|transcription| transcription.text.as_deref())
+    {
+        emit_text(text, state);
+    }
+}
+
+fn handle_model_turn(
+    server_content: &rust_genai::types::live_types::LiveServerContent,
+    state: &mut ReceiveState,
+    config: &ReceiveConfig<'_>,
+) -> rust_genai::Result<()> {
+    let Some(content) = server_content.model_turn.as_ref() else {
+        return Ok(());
+    };
+    for part in &content.parts {
+        if part.thought.unwrap_or(false) {
+            continue;
+        }
+        match &part.kind {
+            rust_genai::types::content::PartKind::Text { text } => {
+                if !config.native_audio {
+                    emit_text(text, state);
+                } else if config.audio_verbose {
+                    println!("assistant: {text}");
+                }
+            }
+            rust_genai::types::content::PartKind::InlineData { inline_data } => {
+                handle_inline_data(inline_data, state, config)?;
+            }
+            rust_genai::types::content::PartKind::FileData { file_data } => {
+                if config.audio_verbose {
+                    println!(
+                        "assistant: [file] uri={file_uri} mime={mime_type}",
+                        file_uri = file_data.file_uri,
+                        mime_type = file_data.mime_type
+                    );
+                }
+            }
+            rust_genai::types::content::PartKind::FunctionCall { function_call } => {
+                if config.audio_verbose {
+                    println!("assistant: [function_call] {function_call:?}");
+                }
+            }
+            rust_genai::types::content::PartKind::FunctionResponse { function_response } => {
+                if config.audio_verbose {
+                    println!("assistant: [function_response] {function_response:?}");
+                }
+            }
+            rust_genai::types::content::PartKind::ExecutableCode { executable_code } => {
+                if config.audio_verbose {
+                    println!("assistant: [code] {executable_code:?}");
+                }
+            }
+            rust_genai::types::content::PartKind::CodeExecutionResult {
+                code_execution_result,
+            } => {
+                if config.audio_verbose {
+                    println!("assistant: [code_result] {code_execution_result:?}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_inline_data(
+    inline_data: &rust_genai::types::content::Blob,
+    state: &mut ReceiveState,
+    config: &ReceiveConfig<'_>,
+) -> rust_genai::Result<()> {
+    if inline_data.mime_type.starts_with("audio/") {
+        if let Some(path) = config.audio_out_path {
+            let rate = parse_sample_rate(&inline_data.mime_type).unwrap_or(24_000);
+            if state.wav_writer.is_none() {
+                state.wav_writer = Some(WavWriter::create(path, rate)?);
+            }
+            if let Some(writer) = state.wav_writer.as_mut() {
+                if state.audio_saved_path.is_none() {
+                    state.audio_saved_path = Some((path.to_string(), writer.sample_rate));
+                }
+                writer.write_chunk(&inline_data.data)?;
+            }
+        }
+        if config.audio_verbose {
+            println!(
+                "assistant: [audio chunk] mime={mime_type} bytes={bytes}",
+                mime_type = inline_data.mime_type,
+                bytes = inline_data.data.len()
+            );
+        }
+    } else if config.audio_verbose {
+        println!(
+            "assistant: [inline data] mime={mime_type} bytes={bytes}",
+            mime_type = inline_data.mime_type,
+            bytes = inline_data.data.len()
+        );
+    }
+    Ok(())
+}
+
+fn emit_text(text: &str, state: &mut ReceiveState) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if !state.text_started {
+        print!("assistant: ");
+        state.text_started = true;
+    } else if let Some(first_char) = trimmed.chars().next() {
+        // 智能判断是否需要空格
+        if text.starts_with(char::is_whitespace) && needs_space_before(state.last_char, first_char)
+        {
+            print!(" ");
+        }
+    }
+    print!("{trimmed}");
+    std::io::stdout().flush().ok();
+    state.last_char = trimmed.chars().last();
 }
 
 fn needs_space_before(last: Option<char>, current_first: char) -> bool {
@@ -351,13 +388,10 @@ fn needs_space_before(last: Option<char>, current_first: char) -> bool {
 }
 
 fn env_flag(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|value| {
-            let value = value.trim().to_lowercase();
-            value == "1" || value == "true" || value == "yes"
-        })
-        .unwrap_or(false)
+    std::env::var(name).ok().is_some_and(|value| {
+        let value = value.trim().to_lowercase();
+        value == "1" || value == "true" || value == "yes"
+    })
 }
 
 fn parse_sample_rate(mime_type: &str) -> Option<u32> {
@@ -391,7 +425,11 @@ impl WavWriter {
 
     fn write_chunk(&mut self, data: &[u8]) -> rust_genai::Result<()> {
         self.file.write_all(data)?;
-        self.data_len = self.data_len.saturating_add(data.len() as u32);
+        let chunk_len =
+            u32::try_from(data.len()).map_err(|_| rust_genai::Error::InvalidConfig {
+                message: "audio chunk too large".into(),
+            })?;
+        self.data_len = self.data_len.saturating_add(chunk_len);
         Ok(())
     }
 

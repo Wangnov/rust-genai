@@ -21,5 +21,5 @@ fn main() {
     };
 
     let content = Content::from_parts(vec![Part::function_response(response)], Role::Function);
-    println!("{:?}", content);
+    println!("{content:?}");
 }

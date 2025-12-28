@@ -39,10 +39,7 @@ fn ensure_extension(name: &str, mime: Option<&str>) -> String {
         return name.to_string();
     }
     let ext = mime.and_then(extension_from_mime);
-    match ext {
-        Some(ext) => format!("{name}.{ext}"),
-        None => name.to_string(),
-    }
+    ext.map_or_else(|| name.to_string(), |ext| format!("{name}.{ext}"))
 }
 
 #[tokio::main]
@@ -52,16 +49,15 @@ async fn main() -> rust_genai::Result<()> {
         value
     } else {
         let files = client.files().all().await?;
-        match files
+        if let Some(name) = files
             .iter()
             .find(|file| file.source == Some(FileSource::Generated))
             .and_then(|file| file.name.clone())
         {
-            Some(name) => name,
-            None => {
-                println!("no generated files found; set GENAI_FILE_NAME to download a file.");
-                return Ok(());
-            }
+            name
+        } else {
+            println!("no generated files found; set GENAI_FILE_NAME to download a file.");
+            return Ok(());
         }
     };
     if !file_name.starts_with("files/") {

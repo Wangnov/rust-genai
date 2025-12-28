@@ -8,12 +8,11 @@ async fn main() -> rust_genai::Result<()> {
         value
     } else {
         let stores = client.file_search_stores().all().await?;
-        match stores.first().and_then(|store| store.name.clone()) {
-            Some(name) => name,
-            None => {
-                println!("no file search store found; set GENAI_FILE_SEARCH_STORE to upload.");
-                return Ok(());
-            }
+        if let Some(name) = stores.first().and_then(|store| store.name.clone()) {
+            name
+        } else {
+            println!("no file search store found; set GENAI_FILE_SEARCH_STORE to upload.");
+            return Ok(());
         }
     };
     let op = client

@@ -10,26 +10,19 @@ use std::io::Write;
 /// 如果 resumable 字段返回 None，说明当前不支持恢复功能。
 #[tokio::main]
 async fn main() -> Result<()> {
+    run().await
+}
+
+async fn run() -> Result<()> {
     let client = Client::from_env()?;
     let model = std::env::var("GENAI_LIVE_MODEL")
         .unwrap_or_else(|_| "gemini-2.5-flash-native-audio-preview-12-2025".to_string());
 
     let native_audio = model.contains("native-audio");
 
-    let config = if native_audio {
-        LiveConnectConfig {
-            response_modalities: Some(vec![Modality::Audio]),
-            output_audio_transcription: Some(AudioTranscriptionConfig::default()),
-            ..Default::default()
-        }
-    } else {
-        LiveConnectConfig {
-            response_modalities: Some(vec![Modality::Text]),
-            ..Default::default()
-        }
-    };
+    let config = build_live_config(native_audio);
 
-    println!("连接 Live API 中... (model={})", model);
+    println!("连接 Live API 中... (model={model})");
     let mut session = client
         .live()
         .builder(model.clone())
@@ -40,185 +33,20 @@ async fn main() -> Result<()> {
 
     println!("连接成功。发送多条消息以获取 resumption handle...");
 
-    // 发送第一条消息
-    if native_audio {
-        session
-            .send_realtime_input(LiveSendRealtimeInputParameters {
-                media: None,
-                audio: None,
-                audio_stream_end: None,
-                video: None,
-                text: Some("你好，我叫小明。".to_string()),
-                activity_start: None,
-                activity_end: None,
-            })
-            .await?;
-    } else {
-        session.send_text("你好，我叫小明。").await?;
-    }
+    send_text_or_audio(&session, native_audio, "你好，我叫小明。").await?;
 
     let mut handle = None;
-    let mut text_started = false;
-    let mut last_char: Option<char> = None;
-    let mut turns = 0;
+    let mut state = TurnState::new();
 
     println!("等待响应并收集 resumption handle...");
 
-    // 先完成第一轮对话
-    loop {
-        let message = session.receive().await;
-        let Some(message) = message else { break };
-        let message = message?;
-
-        // 收集 resumption handle
-        if let Some(update) = message.session_resumption_update.as_ref() {
-            if update.resumable.unwrap_or(false) && update.new_handle.is_some() {
-                handle = update.new_handle.clone();
-                println!("[收到可用的 resumption handle]");
-            }
-        }
-
-        // 显示模型响应
-        if native_audio {
-            if let Some(transcription) = message
-                .server_content
-                .as_ref()
-                .and_then(|c| c.output_transcription.as_ref())
-            {
-                if let Some(text) = transcription.text.as_deref() {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        if !text_started {
-                            print!("assistant: ");
-                            text_started = true;
-                        } else if let Some(first_char) = trimmed.chars().next() {
-                            if text.starts_with(char::is_whitespace)
-                                && needs_space_before(last_char, first_char)
-                            {
-                                print!(" ");
-                            }
-                        }
-                        print!("{}", trimmed);
-                        std::io::stdout().flush().ok();
-                        last_char = trimmed.chars().last();
-                    }
-                }
-            }
-        } else if let Some(content) = message
-            .server_content
-            .as_ref()
-            .and_then(|c| c.model_turn.as_ref())
-        {
-            if let Some(text) = content.first_text() {
-                if !text_started {
-                    print!("assistant: ");
-                    text_started = true;
-                }
-                print!("{}", text);
-                std::io::stdout().flush().ok();
-            }
-        }
-
-        if message
-            .server_content
-            .as_ref()
-            .and_then(|c| c.turn_complete)
-            .unwrap_or(false)
-        {
-            if text_started {
-                println!();
-                text_started = false;
-            }
-            turns += 1;
-            break;
-        }
-    }
+    receive_until_turn_complete(&mut session, native_audio, &mut state, &mut handle).await?;
 
     // 如果还没获取到 handle，再发送一条消息
-    if handle.is_none() && turns < 2 {
+    if handle.is_none() {
         println!("\n发送第二条消息...");
-        if native_audio {
-            session
-                .send_realtime_input(LiveSendRealtimeInputParameters {
-                    media: None,
-                    audio: None,
-                    audio_stream_end: None,
-                    video: None,
-                    text: Some("今天天气怎么样？".to_string()),
-                    activity_start: None,
-                    activity_end: None,
-                })
-                .await?;
-        } else {
-            session.send_text("今天天气怎么样？").await?;
-        }
-
-        loop {
-            let message = session.receive().await;
-            let Some(message) = message else { break };
-            let message = message?;
-
-            // 收集 resumption handle
-            if let Some(update) = message.session_resumption_update.as_ref() {
-                if update.resumable.unwrap_or(false) && update.new_handle.is_some() {
-                    handle = update.new_handle.clone();
-                    println!("[收到可用的 resumption handle]");
-                }
-            }
-
-            // 显示模型响应
-            if native_audio {
-                if let Some(transcription) = message
-                    .server_content
-                    .as_ref()
-                    .and_then(|c| c.output_transcription.as_ref())
-                {
-                    if let Some(text) = transcription.text.as_deref() {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            if !text_started {
-                                print!("assistant: ");
-                                text_started = true;
-                            } else if let Some(first_char) = trimmed.chars().next() {
-                                if text.starts_with(char::is_whitespace)
-                                    && needs_space_before(last_char, first_char)
-                                {
-                                    print!(" ");
-                                }
-                            }
-                            print!("{}", trimmed);
-                            std::io::stdout().flush().ok();
-                            last_char = trimmed.chars().last();
-                        }
-                    }
-                }
-            } else if let Some(content) = message
-                .server_content
-                .as_ref()
-                .and_then(|c| c.model_turn.as_ref())
-            {
-                if let Some(text) = content.first_text() {
-                    if !text_started {
-                        print!("assistant: ");
-                        text_started = true;
-                    }
-                    print!("{}", text);
-                    std::io::stdout().flush().ok();
-                }
-            }
-
-            if message
-                .server_content
-                .as_ref()
-                .and_then(|c| c.turn_complete)
-                .unwrap_or(false)
-            {
-                if text_started {
-                    println!();
-                }
-                break;
-            }
-        }
+        send_text_or_audio(&session, native_audio, "今天天气怎么样？").await?;
+        receive_until_turn_complete(&mut session, native_audio, &mut state, &mut handle).await?;
     }
 
     if let Some(handle) = handle {
@@ -237,81 +65,17 @@ async fn main() -> Result<()> {
         println!("重连成功。继续对话...");
 
         // 发送恢复后的消息
-        if native_audio {
-            resumed
-                .send_realtime_input(LiveSendRealtimeInputParameters {
-                    media: None,
-                    audio: None,
-                    audio_stream_end: None,
-                    video: None,
-                    text: Some("我叫什么名字？".to_string()),
-                    activity_start: None,
-                    activity_end: None,
-                })
-                .await?;
-        } else {
-            resumed.send_text("我叫什么名字？").await?;
-        }
+        send_text_or_audio(&resumed, native_audio, "我叫什么名字？").await?;
 
-        // 显示恢复后的响应
-        text_started = false;
-        last_char = None;
-
-        while let Some(message) = resumed.receive().await {
-            let message = message?;
-
-            if native_audio {
-                if let Some(transcription) = message
-                    .server_content
-                    .as_ref()
-                    .and_then(|c| c.output_transcription.as_ref())
-                {
-                    if let Some(text) = transcription.text.as_deref() {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            if !text_started {
-                                print!("assistant: ");
-                                text_started = true;
-                            } else if let Some(first_char) = trimmed.chars().next() {
-                                if text.starts_with(char::is_whitespace)
-                                    && needs_space_before(last_char, first_char)
-                                {
-                                    print!(" ");
-                                }
-                            }
-                            print!("{}", trimmed);
-                            std::io::stdout().flush().ok();
-                            last_char = trimmed.chars().last();
-                        }
-                    }
-                }
-            } else if let Some(content) = message
-                .server_content
-                .as_ref()
-                .and_then(|c| c.model_turn.as_ref())
-            {
-                if let Some(text) = content.first_text() {
-                    if !text_started {
-                        print!("assistant: ");
-                        text_started = true;
-                    }
-                    print!("{}", text);
-                    std::io::stdout().flush().ok();
-                }
-            }
-
-            if message
-                .server_content
-                .as_ref()
-                .and_then(|c| c.turn_complete)
-                .unwrap_or(false)
-            {
-                if text_started {
-                    println!();
-                }
-                break;
-            }
-        }
+        let mut resume_state = TurnState::new();
+        let mut resume_handle = None;
+        receive_until_turn_complete(
+            &mut resumed,
+            native_audio,
+            &mut resume_state,
+            &mut resume_handle,
+        )
+        .await?;
 
         resumed.close().await?;
         println!("\n✓ 会话恢复成功！模型记住了你叫\"小明\"。");
@@ -322,6 +86,156 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn build_live_config(native_audio: bool) -> LiveConnectConfig {
+    if native_audio {
+        LiveConnectConfig {
+            response_modalities: Some(vec![Modality::Audio]),
+            output_audio_transcription: Some(AudioTranscriptionConfig::default()),
+            ..Default::default()
+        }
+    } else {
+        LiveConnectConfig {
+            response_modalities: Some(vec![Modality::Text]),
+            ..Default::default()
+        }
+    }
+}
+
+async fn send_text_or_audio(
+    session: &rust_genai::live::LiveSession,
+    native_audio: bool,
+    text: &str,
+) -> Result<()> {
+    if native_audio {
+        session
+            .send_realtime_input(LiveSendRealtimeInputParameters {
+                media: None,
+                audio: None,
+                audio_stream_end: None,
+                video: None,
+                text: Some(text.to_string()),
+                activity_start: None,
+                activity_end: None,
+            })
+            .await
+    } else {
+        session.send_text(text).await
+    }
+}
+
+async fn receive_until_turn_complete(
+    session: &mut rust_genai::live::LiveSession,
+    native_audio: bool,
+    state: &mut TurnState,
+    handle: &mut Option<String>,
+) -> Result<()> {
+    loop {
+        let message = session.receive().await;
+        let Some(message) = message else { break };
+        let message = message?;
+
+        update_resumption_handle(&message, handle);
+        render_message(&message, native_audio, state);
+
+        if message
+            .server_content
+            .as_ref()
+            .and_then(|content| content.turn_complete)
+            .unwrap_or(false)
+        {
+            if state.text_started {
+                println!();
+            }
+            state.reset();
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn update_resumption_handle(
+    message: &rust_genai::types::live_types::LiveServerMessage,
+    handle: &mut Option<String>,
+) {
+    if let Some(update) = message.session_resumption_update.as_ref() {
+        if update.resumable.unwrap_or(false) && update.new_handle.is_some() {
+            handle.clone_from(&update.new_handle);
+            println!("[收到可用的 resumption handle]");
+        }
+    }
+}
+
+fn render_message(
+    message: &rust_genai::types::live_types::LiveServerMessage,
+    native_audio: bool,
+    state: &mut TurnState,
+) {
+    if native_audio {
+        if let Some(text) = message
+            .server_content
+            .as_ref()
+            .and_then(|content| content.output_transcription.as_ref())
+            .and_then(|transcription| transcription.text.as_deref())
+        {
+            emit_transcription(text, state);
+        }
+    } else if let Some(text) = message
+        .server_content
+        .as_ref()
+        .and_then(|content| content.model_turn.as_ref())
+        .and_then(|content| content.first_text())
+    {
+        emit_text(text, state);
+    }
+}
+
+fn emit_transcription(text: &str, state: &mut TurnState) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if !state.text_started {
+        print!("assistant: ");
+        state.text_started = true;
+    } else if let Some(first_char) = trimmed.chars().next() {
+        if text.starts_with(char::is_whitespace) && needs_space_before(state.last_char, first_char)
+        {
+            print!(" ");
+        }
+    }
+    print!("{trimmed}");
+    std::io::stdout().flush().ok();
+    state.last_char = trimmed.chars().last();
+}
+
+fn emit_text(text: &str, state: &mut TurnState) {
+    if !state.text_started {
+        print!("assistant: ");
+        state.text_started = true;
+    }
+    print!("{text}");
+    std::io::stdout().flush().ok();
+}
+
+struct TurnState {
+    text_started: bool,
+    last_char: Option<char>,
+}
+
+impl TurnState {
+    const fn new() -> Self {
+        Self {
+            text_started: false,
+            last_char: None,
+        }
+    }
+
+    const fn reset(&mut self) {
+        self.text_started = false;
+        self.last_char = None;
+    }
 }
 
 fn needs_space_before(last: Option<char>, current_first: char) -> bool {

@@ -7,7 +7,7 @@ use rust_genai::types::enums::Modality;
 use rust_genai::types::models::GenerateContentConfig;
 use rust_genai::Client;
 use std::fs::File;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 fn example_files_dir() -> PathBuf {
@@ -33,9 +33,10 @@ fn write_wav(path: &Path, pcm_data: &[u8], sample_rate: u32) -> std::io::Result<
     let mut file = File::create(path)?;
     let channels: u16 = 1;
     let bits_per_sample: u16 = 16;
-    let byte_rate = sample_rate * channels as u32 * bits_per_sample as u32 / 8;
+    let byte_rate = sample_rate * u32::from(channels) * u32::from(bits_per_sample) / 8;
     let block_align = channels * bits_per_sample / 8;
-    let data_len = pcm_data.len() as u32;
+    let data_len = u32::try_from(pcm_data.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "pcm data too large"))?;
     let chunk_size = 36 + data_len;
 
     file.write_all(b"RIFF")?;

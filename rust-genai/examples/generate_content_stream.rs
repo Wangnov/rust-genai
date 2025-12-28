@@ -1,5 +1,6 @@
 use futures_util::StreamExt;
 use rust_genai::types::content::Content;
+use rust_genai::types::models::GenerateContentConfig;
 use rust_genai::Client;
 use std::io::{self, Write};
 
@@ -11,7 +12,7 @@ async fn main() -> rust_genai::Result<()> {
         .generate_content_stream(
             "gemini-2.5-flash",
             vec![Content::text("用三句话介绍 Rust")],
-            Default::default(),
+            GenerateContentConfig::default(),
         )
         .await?;
 
