@@ -8,6 +8,7 @@
 [![MSRV](https://img.shields.io/crates/msrv/rust-genai)](https://crates.io/crates/rust-genai)
 [![GitHub Release](https://img.shields.io/github/v/release/Wangnov/rust-genai)](https://github.com/Wangnov/rust-genai/releases)
 [![Deps](https://deps.rs/repo/github/Wangnov/rust-genai/status.svg)](https://deps.rs/repo/github/Wangnov/rust-genai)
+[![codecov](https://codecov.io/gh/wangnov/rust-genai/branch/main/graph/badge.svg)](https://codecov.io/gh/wangnov/rust-genai)
 
 **Language: 中文 | [English](#installation-1)**
 
