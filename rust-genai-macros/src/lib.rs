@@ -22,70 +22,21 @@ fn expand_gemini_tool(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let struct_attrs = parse_gemini_attrs(&input.attrs)?;
     let struct_doc = extract_doc_comment(&input.attrs);
 
-    let function_name = struct_attrs
-        .name
-        .clone()
-        .unwrap_or_else(|| name.to_string());
-    let function_description = struct_attrs.description.clone().or(struct_doc);
+    let GeminiAttr {
+        name: struct_name,
+        description: struct_description,
+        ..
+    } = struct_attrs;
+    let function_name = struct_name.unwrap_or_else(|| name.to_string());
+    let function_description = struct_description.or(struct_doc);
 
     let fields = match &input.data {
         Data::Struct(data) => &data.fields,
         _ => return Err(syn::Error::new_spanned(input, "GeminiTool 仅支持结构体")),
     };
 
-    let mut property_inserts = Vec::new();
-    let mut required_fields = Vec::new();
-    let mut ordering_fields = Vec::new();
-
-    match fields {
-        Fields::Named(named) => {
-            for field in &named.named {
-                let field_ident = field
-                    .ident
-                    .as_ref()
-                    .ok_or_else(|| syn::Error::new_spanned(field, "GeminiTool 仅支持命名字段"))?;
-                let field_attrs = parse_gemini_attrs(&field.attrs)?;
-                if field_attrs.skip {
-                    continue;
-                }
-
-                let field_doc = extract_doc_comment(&field.attrs);
-                let property_name = field_attrs
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| field_ident.to_string());
-
-                let is_optional = is_option_type(&field.ty);
-                let schema_expr =
-                    build_schema_expr(&field.ty, is_optional, &field_attrs, field_doc);
-
-                property_inserts.push(quote! {
-                    {
-                        let schema = #schema_expr;
-                        properties.insert(#property_name.to_string(), Box::new(schema));
-                    }
-                });
-
-                ordering_fields.push(quote! { #property_name.to_string() });
-
-                if field_attrs.required || (!is_optional && !field_attrs.optional) {
-                    required_fields.push(quote! { #property_name.to_string() });
-                }
-            }
-        }
-        _ => {
-            return Err(syn::Error::new_spanned(
-                fields,
-                "GeminiTool 仅支持具名字段结构体",
-            ))
-        }
-    }
-
-    let description_expr = if let Some(description) = function_description {
-        quote!(Some(#description.to_string()))
-    } else {
-        quote!(None)
-    };
+    let (property_inserts, required_fields, ordering_fields) = collect_schema_fields(fields)?;
+    let description_expr = build_description_expr(function_description);
 
     Ok(quote! {
         impl #name {
@@ -141,6 +92,67 @@ fn expand_gemini_tool(input: &DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
+fn collect_schema_fields(
+    fields: &Fields,
+) -> syn::Result<(Vec<TokenStream2>, Vec<TokenStream2>, Vec<TokenStream2>)> {
+    let mut property_inserts = Vec::new();
+    let mut required_fields = Vec::new();
+    let mut ordering_fields = Vec::new();
+
+    match fields {
+        Fields::Named(named) => {
+            for field in &named.named {
+                let field_ident = field
+                    .ident
+                    .as_ref()
+                    .ok_or_else(|| syn::Error::new_spanned(field, "GeminiTool 仅支持命名字段"))?;
+                let field_attrs = parse_gemini_attrs(&field.attrs)?;
+                if field_attrs.skip {
+                    continue;
+                }
+
+                let field_doc = extract_doc_comment(&field.attrs);
+                let property_name = field_attrs
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| field_ident.to_string());
+
+                let is_optional = is_option_type(&field.ty);
+                let schema_expr =
+                    build_schema_expr(&field.ty, is_optional, &field_attrs, field_doc);
+
+                property_inserts.push(quote! {
+                    {
+                        let schema = #schema_expr;
+                        properties.insert(#property_name.to_string(), Box::new(schema));
+                    }
+                });
+
+                ordering_fields.push(quote! { #property_name.to_string() });
+
+                if field_attrs.required || (!is_optional && !field_attrs.optional) {
+                    required_fields.push(quote! { #property_name.to_string() });
+                }
+            }
+        }
+        _ => {
+            return Err(syn::Error::new_spanned(
+                fields,
+                "GeminiTool 仅支持具名字段结构体",
+            ))
+        }
+    }
+
+    Ok((property_inserts, required_fields, ordering_fields))
+}
+
+fn build_description_expr(function_description: Option<String>) -> TokenStream2 {
+    function_description.map_or_else(
+        || quote!(None),
+        |description| quote!(Some(#description.to_string())),
+    )
+}
+
 #[derive(Default)]
 struct GeminiAttr {
     name: Option<String>,
@@ -173,9 +185,9 @@ fn parse_gemini_attrs(attrs: &[Attribute]) -> syn::Result<GeminiAttr> {
                 let values = value
                     .value()
                     .split(',')
-                    .map(|v| v.trim())
+                    .map(str::trim)
                     .filter(|v| !v.is_empty())
-                    .map(|v| v.to_string())
+                    .map(ToString::to_string)
                     .collect::<Vec<_>>();
                 if !values.is_empty() {
                     output.enum_values = Some(values);
@@ -354,4 +366,134 @@ fn last_path_ident(ty: &Type) -> Option<String> {
         return path.path.segments.last().map(|seg| seg.ident.to_string());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::ToTokens;
+    use syn::parse_quote;
+
+    fn normalize_tokens(tokens: &TokenStream2) -> String {
+        tokens.to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn parse_gemini_attrs_reads_values() {
+        let attrs: Vec<Attribute> = vec![parse_quote!(
+            #[gemini(
+                name = "tool_name",
+                description = "desc",
+                enum_values = "a, b",
+                required,
+                optional,
+                skip
+            )]
+        )];
+        let parsed = parse_gemini_attrs(&attrs).unwrap();
+        assert_eq!(parsed.name.as_deref(), Some("tool_name"));
+        assert_eq!(parsed.description.as_deref(), Some("desc"));
+        assert_eq!(
+            parsed.enum_values.as_ref().unwrap(),
+            &vec!["a".to_string(), "b".to_string()]
+        );
+        assert!(parsed.required);
+        assert!(parsed.optional);
+        assert!(parsed.skip);
+    }
+
+    #[test]
+    fn parse_gemini_attrs_ignores_empty_enum_values() {
+        let attrs: Vec<Attribute> =
+            vec![parse_quote!(#[gemini(rename = "alias", enum_values = " , ")])];
+        let parsed = parse_gemini_attrs(&attrs).unwrap();
+        assert_eq!(parsed.name.as_deref(), Some("alias"));
+        assert!(parsed.enum_values.is_none());
+    }
+
+    #[test]
+    fn extract_doc_comment_combines_lines() {
+        let attrs: Vec<Attribute> = vec![
+            parse_quote!(#[doc = " First line "]),
+            parse_quote!(#[doc = "Second line"]),
+        ];
+        let docs = extract_doc_comment(&attrs).unwrap();
+        assert_eq!(docs, "First line\nSecond line");
+    }
+
+    #[test]
+    fn expand_gemini_tool_rejects_enum() {
+        let input: DeriveInput = parse_quote!(
+            enum Bad {
+                A,
+            }
+        );
+        let err = expand_gemini_tool(&input).unwrap_err();
+        assert!(err.to_string().contains("GeminiTool 仅支持结构体"));
+    }
+
+    #[test]
+    fn expand_gemini_tool_rejects_tuple_struct() {
+        let input: DeriveInput = parse_quote!(
+            struct Bad(String);
+        );
+        let err = expand_gemini_tool(&input).unwrap_err();
+        assert!(err.to_string().contains("具名字段"));
+    }
+
+    #[test]
+    fn schema_helpers_cover_variants() {
+        let opt_vec: Type = parse_quote!(Option<Vec<String>>);
+        let tokens = normalize_tokens(&schema_expr_for_type(&opt_vec));
+        assert!(tokens.contains("Type::Array"));
+        assert!(tokens.contains("Schema::string"));
+
+        let int_ty: Type = parse_quote!(i64);
+        let tokens = normalize_tokens(&schema_expr_for_type(&int_ty));
+        assert!(tokens.contains("Schema::integer"));
+
+        let unknown: Type = parse_quote!(CustomType);
+        let tokens = normalize_tokens(&schema_expr_for_type(&unknown));
+        assert!(tokens.contains("Type::Object"));
+    }
+
+    #[test]
+    fn build_schema_expr_applies_metadata() {
+        let ty: Type = parse_quote!(Option<String>);
+        let attrs = GeminiAttr {
+            description: Some("desc".to_string()),
+            enum_values: Some(vec!["x".to_string(), "y".to_string()]),
+            ..Default::default()
+        };
+        let tokens = normalize_tokens(&build_schema_expr(&ty, true, &attrs, None));
+        assert!(tokens.contains("nullable=Some(true)"));
+        assert!(tokens.contains("schema.description=Some(\"desc\".to_string())"));
+        assert!(tokens.contains("schema.enum_values=Some"));
+    }
+
+    #[test]
+    fn type_helpers_detect_options_and_vecs() {
+        let ty: Type = parse_quote!(&Option<Vec<u32>>);
+        assert!(is_option_type(&ty));
+        let inner = option_inner(&ty).unwrap();
+        let inner_tokens = inner.to_token_stream().to_string();
+        assert!(inner_tokens.contains("Vec"));
+
+        let vec_ty: Type = parse_quote!(Vec<bool>);
+        assert!(vec_inner(&vec_ty).is_some());
+        assert!(last_path_ident(&vec_ty).is_some());
+        let reference: Type = parse_quote!(&&str);
+        let stripped = strip_reference(&reference);
+        assert!(last_path_ident(stripped).is_some());
+    }
+
+    #[test]
+    fn detects_serde_json_value() {
+        let ty: Type = parse_quote!(serde_json::Value);
+        assert!(is_serde_json_value(&ty));
+        let ty: Type = parse_quote!(Value);
+        assert!(is_serde_json_value(&ty));
+        let ty: Type = parse_quote!(String);
+        assert!(!is_serde_json_value(&ty));
+    }
 }
