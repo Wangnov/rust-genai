@@ -22,23 +22,29 @@ pub struct Interactions {
 }
 
 impl Interactions {
-    pub(crate) fn new(inner: Arc<ClientInner>) -> Self {
+    pub(crate) const fn new(inner: Arc<ClientInner>) -> Self {
         Self { inner }
     }
 
     /// 创建 Interaction。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn create(&self, config: CreateInteractionConfig) -> Result<Interaction> {
         self.create_with_config(config).await
     }
 
     /// 创建 Interaction（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn create_with_config(
         &self,
         mut config: CreateInteractionConfig,
     ) -> Result<Interaction> {
         ensure_gemini_backend(&self.inner)?;
         let http_options = config.http_options.take();
-        let url = build_interactions_url(&self.inner, http_options.as_ref())?;
+        let url = build_interactions_url(&self.inner, http_options.as_ref());
         let mut request = self.inner.http.post(url).json(&config);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -53,13 +59,16 @@ impl Interactions {
     }
 
     /// 创建 Interaction（流式 SSE）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn create_stream(
         &self,
         mut config: CreateInteractionConfig,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<InteractionEvent>> + Send>>> {
         ensure_gemini_backend(&self.inner)?;
         let http_options = config.http_options.take();
-        let mut url = build_interactions_url(&self.inner, http_options.as_ref())?;
+        let mut url = build_interactions_url(&self.inner, http_options.as_ref());
         url.push_str("?alt=sse");
         let mut request = self.inner.http.post(url).json(&config);
         request = apply_http_options(request, http_options.as_ref())?;
@@ -77,12 +86,18 @@ impl Interactions {
     }
 
     /// 获取 Interaction。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn get(&self, id: impl AsRef<str>) -> Result<Interaction> {
         self.get_with_config(id, GetInteractionConfig::default())
             .await
     }
 
     /// 获取 Interaction（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn get_with_config(
         &self,
         id: impl AsRef<str>,
@@ -91,7 +106,7 @@ impl Interactions {
         ensure_gemini_backend(&self.inner)?;
         let http_options = config.http_options.take();
         let name = normalize_interaction_name(id.as_ref());
-        let url = build_interaction_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_interaction_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -106,12 +121,18 @@ impl Interactions {
     }
 
     /// 删除 Interaction。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn delete(&self, id: impl AsRef<str>) -> Result<()> {
         self.delete_with_config(id, DeleteInteractionConfig::default())
             .await
     }
 
     /// 删除 Interaction（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn delete_with_config(
         &self,
         id: impl AsRef<str>,
@@ -120,7 +141,7 @@ impl Interactions {
         ensure_gemini_backend(&self.inner)?;
         let http_options = config.http_options.take();
         let name = normalize_interaction_name(id.as_ref());
-        let url = build_interaction_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_interaction_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -135,12 +156,18 @@ impl Interactions {
     }
 
     /// 取消 Interaction。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn cancel(&self, id: impl AsRef<str>) -> Result<Interaction> {
         self.cancel_with_config(id, CancelInteractionConfig::default())
             .await
     }
 
     /// 取消 Interaction（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn cancel_with_config(
         &self,
         id: impl AsRef<str>,
@@ -149,7 +176,7 @@ impl Interactions {
         ensure_gemini_backend(&self.inner)?;
         let http_options = config.http_options.take();
         let name = normalize_interaction_name(id.as_ref());
-        let url = build_interaction_cancel_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_interaction_cancel_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.post(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -184,39 +211,39 @@ fn normalize_interaction_name(name: &str) -> String {
 fn build_interactions_url(
     inner: &ClientInner,
     http_options: Option<&rust_genai_types::http::HttpOptions>,
-) -> Result<String> {
+) -> String {
     let base = http_options
         .and_then(|opts| opts.base_url.as_deref())
         .unwrap_or(&inner.api_client.base_url);
     let version = http_options
         .and_then(|opts| opts.api_version.as_deref())
         .unwrap_or(&inner.api_client.api_version);
-    Ok(format!("{base}{version}/interactions"))
+    format!("{base}{version}/interactions")
 }
 
 fn build_interaction_url(
     inner: &ClientInner,
     name: &str,
     http_options: Option<&rust_genai_types::http::HttpOptions>,
-) -> Result<String> {
+) -> String {
     let base = http_options
         .and_then(|opts| opts.base_url.as_deref())
         .unwrap_or(&inner.api_client.base_url);
     let version = http_options
         .and_then(|opts| opts.api_version.as_deref())
         .unwrap_or(&inner.api_client.api_version);
-    Ok(format!("{base}{version}/{name}"))
+    format!("{base}{version}/{name}")
 }
 
 fn build_interaction_cancel_url(
     inner: &ClientInner,
     name: &str,
     http_options: Option<&rust_genai_types::http::HttpOptions>,
-) -> Result<String> {
-    Ok(format!(
+) -> String {
+    format!(
         "{}:cancel",
-        build_interaction_url(inner, name, http_options)?
-    ))
+        build_interaction_url(inner, name, http_options)
+    )
 }
 
 fn apply_http_options(
@@ -251,4 +278,55 @@ async fn parse_interaction_response(response: reqwest::Response) -> Result<Inter
     let value: Value = serde_json::from_str(&text)?;
     let interaction: Interaction = serde_json::from_value(value)?;
     Ok(interaction)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::test_client_inner;
+
+    #[test]
+    fn test_normalize_names_and_urls() {
+        assert_eq!(
+            normalize_interaction_name("interactions/1"),
+            "interactions/1"
+        );
+        assert_eq!(normalize_interaction_name("1"), "interactions/1");
+
+        let gemini = test_client_inner(Backend::GeminiApi);
+        let url = build_interactions_url(&gemini, None);
+        assert!(url.ends_with("/v1beta/interactions"));
+        let url = build_interaction_url(&gemini, "interactions/1", None);
+        assert!(url.ends_with("/v1beta/interactions/1"));
+        let url = build_interaction_cancel_url(&gemini, "interactions/1", None);
+        assert!(url.ends_with("/v1beta/interactions/1:cancel"));
+    }
+
+    #[test]
+    fn test_backend_check_and_invalid_header() {
+        let vertex = test_client_inner(Backend::VertexAi);
+        let err = ensure_gemini_backend(&vertex).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let options = rust_genai_types::http::HttpOptions {
+            headers: Some([("bad header".to_string(), "v".to_string())].into()),
+            ..Default::default()
+        };
+        let err = apply_http_options(request, Some(&options)).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_apply_http_options_invalid_header_value() {
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let options = rust_genai_types::http::HttpOptions {
+            headers: Some([("x-test".to_string(), "bad\nvalue".to_string())].into()),
+            ..Default::default()
+        };
+        let err = apply_http_options(request, Some(&options)).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
 }

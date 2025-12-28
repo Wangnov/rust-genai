@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::hash::BuildHasher;
 
 use futures_util::future::BoxFuture;
 use rust_genai_types::content::{FunctionCall, FunctionResponse, Part};
@@ -32,7 +33,8 @@ pub struct InlineCallableTool {
 }
 
 impl InlineCallableTool {
-    /// 通过 FunctionDeclaration 列表创建工具。
+    /// 通过 `FunctionDeclaration` 列表创建工具。
+    #[must_use]
     pub fn from_declarations(declarations: Vec<FunctionDeclaration>) -> Self {
         Self {
             tool: Tool {
@@ -60,6 +62,7 @@ impl InlineCallableTool {
     }
 
     /// 使用 builder 风格注册 handler。
+    #[must_use]
     pub fn with_handler<F, Fut>(mut self, name: impl Into<String>, handler: F) -> Self
     where
         F: Fn(Value) -> Fut + Send + Sync + 'static,
@@ -79,13 +82,11 @@ impl CallableTool for InlineCallableTool {
         Box::pin(async move {
             let mut parts = Vec::new();
             for call in function_calls {
-                let name = match call.name.as_ref() {
-                    Some(name) => name,
-                    None => continue,
+                let Some(name) = call.name.as_ref() else {
+                    continue;
                 };
-                let handler = match self.handlers.get(name) {
-                    Some(handler) => handler,
-                    None => continue,
+                let Some(handler) = self.handlers.get(name) else {
+                    continue;
                 };
                 let args = call.args.clone().unwrap_or(Value::Null);
                 let response_value = handler(args).await?;
@@ -105,6 +106,9 @@ impl CallableTool for InlineCallableTool {
 }
 
 /// 解析 callable tools，返回声明列表与函数映射。
+///
+/// # Errors
+/// 当工具声明重复或工具返回错误时返回错误。
 pub async fn resolve_callable_tools(
     callable_tools: &mut [Box<dyn CallableTool>],
 ) -> Result<CallableToolInfo> {
@@ -133,9 +137,12 @@ pub async fn resolve_callable_tools(
 }
 
 /// 调用 callable tools。
-pub async fn call_callable_tools(
+///
+/// # Errors
+/// 当函数调用缺少工具或工具调用失败时返回错误。
+pub async fn call_callable_tools<S: BuildHasher + Sync>(
     callable_tools: &mut [Box<dyn CallableTool>],
-    function_map: &HashMap<String, usize>,
+    function_map: &HashMap<String, usize, S>,
     function_calls: &[FunctionCall],
 ) -> Result<Vec<Part>> {
     let mut grouped: HashMap<usize, Vec<FunctionCall>> = HashMap::new();
@@ -160,12 +167,13 @@ pub async fn call_callable_tools(
 }
 
 /// callable tools 解析结果。
-pub struct CallableToolInfo {
+pub struct CallableToolInfo<S = std::collections::hash_map::RandomState> {
     pub tools: Vec<Tool>,
-    pub function_map: HashMap<String, usize>,
+    pub function_map: HashMap<String, usize, S>,
 }
 
 /// 判断是否应禁用 AFC。
+#[must_use]
 pub fn should_disable_afc(config: &GenerateContentConfig, has_callable_tools: bool) -> bool {
     if !has_callable_tools {
         return true;
@@ -191,6 +199,7 @@ pub fn should_disable_afc(config: &GenerateContentConfig, has_callable_tools: bo
 }
 
 /// 获取最大远程调用次数。
+#[must_use]
 pub fn max_remote_calls(config: &GenerateContentConfig) -> usize {
     config
         .automatic_function_calling
@@ -201,6 +210,7 @@ pub fn max_remote_calls(config: &GenerateContentConfig) -> usize {
 }
 
 /// 是否应附加 AFC 历史。
+#[must_use]
 pub fn should_append_history(config: &GenerateContentConfig) -> bool {
     !config
         .automatic_function_calling
@@ -209,14 +219,16 @@ pub fn should_append_history(config: &GenerateContentConfig) -> bool {
         .unwrap_or(false)
 }
 
-/// 检查 AFC 兼容性（禁止未实现 CallableTool 的 function declarations）。
-pub fn validate_afc_tools(
-    _callable_function_map: &HashMap<String, usize>,
+/// 检查 AFC 兼容性（禁止未实现 `CallableTool` 的 function declarations）。
+///
+/// # Errors
+/// 当发现不兼容工具时返回错误。
+pub fn validate_afc_tools<S: BuildHasher>(
+    _callable_function_map: &HashMap<String, usize, S>,
     tools: Option<&[Tool]>,
 ) -> Result<()> {
-    let tools = match tools {
-        Some(tools) => tools,
-        None => return Ok(()),
+    let Some(tools) = tools else {
+        return Ok(());
     };
 
     for tool in tools {
@@ -232,6 +244,9 @@ pub fn validate_afc_tools(
 }
 
 /// 校验 AFC 与其他配置的冲突。
+///
+/// # Errors
+/// 当检测到不兼容配置时返回错误。
 pub fn validate_afc_config(config: &GenerateContentConfig) -> Result<()> {
     if config
         .tool_config
@@ -257,6 +272,7 @@ mod tests {
     use super::*;
     use rust_genai_types::models::AutomaticFunctionCallingConfig;
     use rust_genai_types::tool::{FunctionDeclaration, Tool};
+    use serde_json::json;
 
     #[test]
     fn test_should_disable_afc_when_max_calls_zero() {
@@ -297,6 +313,71 @@ mod tests {
             ..Default::default()
         };
         let err = validate_afc_tools(&HashMap::new(), Some(&[tool])).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_inline_callable_tool_roundtrip() {
+        let mut tool = InlineCallableTool::from_declarations(vec![FunctionDeclaration {
+            name: "sum".to_string(),
+            description: None,
+            parameters: None,
+            parameters_json_schema: None,
+            response: None,
+            response_json_schema: None,
+            behavior: None,
+        }]);
+        tool.register_handler("sum", |value| async move {
+            let a = value["a"].as_i64().unwrap_or(0);
+            let b = value["b"].as_i64().unwrap_or(0);
+            Ok(json!({ "result": a + b }))
+        });
+
+        let mut tools: Vec<Box<dyn CallableTool>> = vec![Box::new(tool)];
+        let info = resolve_callable_tools(&mut tools).await.unwrap();
+        assert!(info.function_map.contains_key("sum"));
+
+        let calls = vec![FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("sum".into()),
+            args: Some(json!({"a": 1, "b": 2})),
+            partial_args: None,
+            will_continue: None,
+        }];
+        let parts = call_callable_tools(&mut tools, &info.function_map, &calls)
+            .await
+            .unwrap();
+        assert_eq!(parts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_call_callable_tools_rejects_missing_name() {
+        let mut tools: Vec<Box<dyn CallableTool>> = Vec::new();
+        let calls = vec![FunctionCall {
+            id: None,
+            name: None,
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }];
+        let err = call_callable_tools(&mut tools, &HashMap::new(), &calls)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_call_callable_tools_rejects_unknown_tool() {
+        let calls = vec![FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("missing".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }];
+        let err = call_callable_tools(&mut [], &HashMap::new(), &calls)
+            .await
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidConfig { .. }));
     }
 }

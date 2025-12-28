@@ -19,11 +19,14 @@ pub struct Caches {
 }
 
 impl Caches {
-    pub(crate) fn new(inner: Arc<ClientInner>) -> Self {
+    pub(crate) const fn new(inner: Arc<ClientInner>) -> Self {
         Self { inner }
     }
 
     /// 创建缓存。
+    ///
+    /// # Errors
+    /// 当请求失败、服务端返回错误或响应解析失败时返回错误。
     pub async fn create(
         &self,
         model: impl Into<String>,
@@ -60,12 +63,18 @@ impl Caches {
     }
 
     /// 获取缓存。
+    ///
+    /// # Errors
+    /// 当请求失败、服务端返回错误或响应解析失败时返回错误。
     pub async fn get(&self, name: impl AsRef<str>) -> Result<CachedContent> {
         self.get_with_config(name, GetCachedContentConfig::default())
             .await
     }
 
     /// 获取缓存（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败、服务端返回错误或响应解析失败时返回错误。
     pub async fn get_with_config(
         &self,
         name: impl AsRef<str>,
@@ -73,7 +82,7 @@ impl Caches {
     ) -> Result<CachedContent> {
         let http_options = config.http_options.take();
         let name = normalize_cached_content_name(&self.inner, name.as_ref())?;
-        let url = build_cached_content_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_cached_content_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -88,6 +97,9 @@ impl Caches {
     }
 
     /// 更新缓存（TTL/过期时间）。
+    ///
+    /// # Errors
+    /// 当请求失败、服务端返回错误或响应解析失败时返回错误。
     pub async fn update(
         &self,
         name: impl AsRef<str>,
@@ -95,7 +107,7 @@ impl Caches {
     ) -> Result<CachedContent> {
         let http_options = config.http_options.take();
         let name = normalize_cached_content_name(&self.inner, name.as_ref())?;
-        let url = build_cached_content_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_cached_content_url(&self.inner, &name, http_options.as_ref());
         let mut body = serde_json::to_value(&config)?;
         if let Some(options) = http_options.as_ref() {
             merge_extra_body(&mut body, options)?;
@@ -114,12 +126,18 @@ impl Caches {
     }
 
     /// 删除缓存。
+    ///
+    /// # Errors
+    /// 当请求失败或服务端返回错误时返回错误。
     pub async fn delete(&self, name: impl AsRef<str>) -> Result<()> {
         self.delete_with_config(name, DeleteCachedContentConfig::default())
             .await
     }
 
     /// 删除缓存（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或服务端返回错误时返回错误。
     pub async fn delete_with_config(
         &self,
         name: impl AsRef<str>,
@@ -127,7 +145,7 @@ impl Caches {
     ) -> Result<()> {
         let http_options = config.http_options.take();
         let name = normalize_cached_content_name(&self.inner, name.as_ref())?;
-        let url = build_cached_content_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_cached_content_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -142,19 +160,25 @@ impl Caches {
     }
 
     /// 列出缓存。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn list(&self) -> Result<ListCachedContentsResponse> {
         self.list_with_config(ListCachedContentsConfig::default())
             .await
     }
 
     /// 列出缓存（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn list_with_config(
         &self,
         mut config: ListCachedContentsConfig,
     ) -> Result<ListCachedContentsResponse> {
         let http_options = config.http_options.take();
         let url = build_cached_contents_url(&self.inner, http_options.as_ref())?;
-        let url = add_list_query_params(url, &config)?;
+        let url = add_list_query_params(&url, &config)?;
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -169,12 +193,18 @@ impl Caches {
     }
 
     /// 列出所有缓存（自动翻页）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn all(&self) -> Result<Vec<CachedContent>> {
         self.all_with_config(ListCachedContentsConfig::default())
             .await
     }
 
     /// 列出所有缓存（带配置，自动翻页）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn all_with_config(
         &self,
         mut config: ListCachedContentsConfig,
@@ -183,7 +213,7 @@ impl Caches {
         let http_options = config.http_options.clone();
         loop {
             let mut page_config = config.clone();
-            page_config.http_options = http_options.clone();
+            page_config.http_options.clone_from(&http_options);
             let response = self.list_with_config(page_config).await?;
             if let Some(items) = response.cached_contents {
                 contents.extend(items);
@@ -315,18 +345,18 @@ fn build_cached_content_url(
     inner: &ClientInner,
     name: &str,
     http_options: Option<&rust_genai_types::http::HttpOptions>,
-) -> Result<String> {
+) -> String {
     let base = http_options
         .and_then(|opts| opts.base_url.as_deref())
         .unwrap_or(&inner.api_client.base_url);
     let version = http_options
         .and_then(|opts| opts.api_version.as_deref())
         .unwrap_or(&inner.api_client.api_version);
-    Ok(format!("{base}{version}/{name}"))
+    format!("{base}{version}/{name}")
 }
 
-fn add_list_query_params(url: String, config: &ListCachedContentsConfig) -> Result<String> {
-    let mut url = reqwest::Url::parse(&url).map_err(|err| Error::InvalidConfig {
+fn add_list_query_params(url: &str, config: &ListCachedContentsConfig) -> Result<String> {
+    let mut url = reqwest::Url::parse(url).map_err(|err| Error::InvalidConfig {
         message: err.to_string(),
     })?;
     {
@@ -409,26 +439,331 @@ fn merge_extra_body(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{ApiClient, Backend, ClientConfig, ClientInner, Credentials, HttpOptions};
+    use crate::test_support::{
+        test_client_inner, test_client_inner_with_base, test_vertex_inner_missing_config,
+    };
+    use serde_json::json;
+    use wiremock::matchers::{method, path, query_param, query_param_is_missing};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_normalize_cached_content_name_gemini() {
-        let config = ClientConfig {
-            api_key: Some("test-key".into()),
-            backend: Backend::GeminiApi,
-            vertex_config: None,
-            http_options: HttpOptions::default(),
-            credentials: Credentials::ApiKey("test-key".into()),
-            auth_scopes: Vec::new(),
-        };
-        let api_client = ApiClient::new(&config).unwrap();
-        let inner = ClientInner {
-            http: reqwest::Client::new(),
-            config,
-            api_client,
-            auth_provider: None,
-        };
+        let inner = test_client_inner(Backend::GeminiApi);
         let name = normalize_cached_content_name(&inner, "abc-123").unwrap();
         assert_eq!(name, "cachedContents/abc-123");
+        let name = normalize_cache_model(&inner, "models/gemini-1.5-pro").unwrap();
+        assert_eq!(name, "models/gemini-1.5-pro");
+    }
+
+    #[test]
+    fn test_normalize_cached_content_name_vertex_and_model() {
+        let inner = test_client_inner(Backend::VertexAi);
+        assert_eq!(
+            normalize_cached_content_name(&inner, "cachedContents/1").unwrap(),
+            "projects/proj/locations/loc/cachedContents/1"
+        );
+        assert_eq!(
+            normalize_cached_content_name(&inner, "locations/us/cachedContents/1").unwrap(),
+            "projects/proj/locations/us/cachedContents/1"
+        );
+        assert_eq!(
+            normalize_cached_content_name(&inner, "projects/p/locations/l/cachedContents/1")
+                .unwrap(),
+            "projects/p/locations/l/cachedContents/1"
+        );
+        assert_eq!(
+            normalize_cached_content_name(&inner, "custom-id").unwrap(),
+            "projects/proj/locations/loc/cachedContents/custom-id"
+        );
+        assert_eq!(
+            normalize_cache_model(&inner, "gemini-1.5-pro").unwrap(),
+            "projects/proj/locations/loc/publishers/google/models/gemini-1.5-pro"
+        );
+    }
+
+    #[test]
+    fn test_normalize_cache_model_vertex_variants() {
+        let inner = test_client_inner(Backend::VertexAi);
+        assert_eq!(
+            normalize_cache_model(&inner, "projects/p/locations/l/publishers/google/models/m1")
+                .unwrap(),
+            "projects/p/locations/l/publishers/google/models/m1"
+        );
+        assert_eq!(
+            normalize_cache_model(&inner, "publishers/google/models/m2").unwrap(),
+            "projects/proj/locations/loc/publishers/google/models/m2"
+        );
+        assert_eq!(
+            normalize_cache_model(&inner, "models/m3").unwrap(),
+            "projects/proj/locations/loc/publishers/google/models/m3"
+        );
+        assert_eq!(
+            normalize_cache_model(&inner, "custom/m4").unwrap(),
+            "projects/proj/locations/loc/publishers/custom/models/m4"
+        );
+    }
+
+    #[test]
+    fn test_vertex_missing_config_errors() {
+        let inner = test_vertex_inner_missing_config();
+        assert!(normalize_cache_model(&inner, "gemini-1.5-pro").is_err());
+        assert!(normalize_cached_content_name(&inner, "cachedContents/1").is_err());
+        assert!(build_cached_contents_url(&inner, None).is_err());
+    }
+
+    #[test]
+    fn test_handle_kms_key_and_query_params() {
+        let gemini = test_client_inner(Backend::GeminiApi);
+        let mut body = json!({"kmsKeyName": "key"}).as_object().unwrap().clone();
+        let err = handle_kms_key(&gemini, &mut body).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let vertex = test_client_inner(Backend::VertexAi);
+        let mut body = json!({"kmsKeyName": "key"}).as_object().unwrap().clone();
+        handle_kms_key(&vertex, &mut body).unwrap();
+        assert!(body.get("encryptionSpec").is_some());
+
+        let url = add_list_query_params(
+            "https://example.com/cachedContents",
+            &ListCachedContentsConfig {
+                page_size: Some(2),
+                page_token: Some("t".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(url.contains("pageSize=2"));
+        assert!(url.contains("pageToken=t"));
+    }
+
+    #[test]
+    fn test_add_list_query_params_invalid_url() {
+        let err =
+            add_list_query_params("not a url", &ListCachedContentsConfig::default()).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_apply_http_options_invalid_header() {
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let options = rust_genai_types::http::HttpOptions {
+            headers: Some([("bad header".to_string(), "v".to_string())].into()),
+            ..Default::default()
+        };
+        let err = apply_http_options(request, Some(&options)).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_apply_http_options_with_timeout_and_headers() {
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let options = rust_genai_types::http::HttpOptions {
+            timeout: Some(1500),
+            headers: Some([("x-test".to_string(), "value".to_string())].into()),
+            ..Default::default()
+        };
+        let request = apply_http_options(request, Some(&options))
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(request.headers().get("x-test").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_build_cache_urls_and_merge_extra_body() {
+        let gemini = test_client_inner(Backend::GeminiApi);
+        let url = build_cached_contents_url(&gemini, None).unwrap();
+        assert!(url.ends_with("/v1beta/cachedContents"));
+        let url = build_cached_content_url(&gemini, "cachedContents/1", None);
+        assert!(url.ends_with("/v1beta/cachedContents/1"));
+
+        let vertex = test_client_inner(Backend::VertexAi);
+        let url = build_cached_contents_url(&vertex, None).unwrap();
+        assert!(url.contains("/projects/proj/locations/loc/cachedContents"));
+
+        let mut body = serde_json::json!({"a": 1});
+        let options = rust_genai_types::http::HttpOptions {
+            extra_body: Some(serde_json::json!({"b": 2})),
+            ..Default::default()
+        };
+        merge_extra_body(&mut body, &options).unwrap();
+        assert_eq!(body.get("b").and_then(serde_json::Value::as_i64), Some(2));
+    }
+
+    #[test]
+    fn test_apply_http_options_invalid_header_value() {
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let options = rust_genai_types::http::HttpOptions {
+            headers: Some([("x-test".to_string(), "bad\nvalue".to_string())].into()),
+            ..Default::default()
+        };
+        let err = apply_http_options(request, Some(&options)).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_merge_extra_body_invalid() {
+        let mut body = serde_json::json!({});
+        let options = rust_genai_types::http::HttpOptions {
+            extra_body: Some(serde_json::json!("bad")),
+            ..Default::default()
+        };
+        let err = merge_extra_body(&mut body, &options).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_create_update_with_extra_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1beta/cachedContents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "cachedContents/1"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/v1beta/cachedContents/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "cachedContents/1"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = test_client_inner_with_base(Backend::GeminiApi, &server.uri(), "v1beta");
+        let caches = Caches::new(Arc::new(inner));
+        let create = CreateCachedContentConfig {
+            http_options: Some(rust_genai_types::http::HttpOptions {
+                extra_body: Some(json!({"extra": "value"})),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let created = caches
+            .create("models/gemini-1.5-pro", create)
+            .await
+            .unwrap();
+        assert_eq!(created.name.as_deref(), Some("cachedContents/1"));
+
+        let update = UpdateCachedContentConfig {
+            http_options: Some(rust_genai_types::http::HttpOptions {
+                extra_body: Some(json!({"extra": "value"})),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let updated = caches.update("cachedContents/1", update).await.unwrap();
+        assert_eq!(updated.name.as_deref(), Some("cachedContents/1"));
+    }
+
+    #[tokio::test]
+    async fn test_caches_vertex_api_flow() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1beta1/projects/proj/locations/loc/cachedContents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "projects/proj/locations/loc/cachedContents/1"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/cachedContents/1",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "projects/proj/locations/loc/cachedContents/1"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("PATCH"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/cachedContents/1",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "projects/proj/locations/loc/cachedContents/1"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("DELETE"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/cachedContents/1",
+            ))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1beta1/projects/proj/locations/loc/cachedContents"))
+            .and(query_param("pageSize", "2"))
+            .and(query_param_is_missing("pageToken"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "cachedContents": [{"name": "projects/proj/locations/loc/cachedContents/1"}],
+                "nextPageToken": "next"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1beta1/projects/proj/locations/loc/cachedContents"))
+            .and(query_param("pageSize", "2"))
+            .and(query_param("pageToken", "next"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "cachedContents": [{"name": "projects/proj/locations/loc/cachedContents/2"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = test_client_inner_with_base(Backend::VertexAi, &server.uri(), "v1beta1");
+        let caches = Caches::new(Arc::new(inner));
+
+        let created = caches
+            .create("gemini-1.5-pro", CreateCachedContentConfig::default())
+            .await
+            .unwrap();
+        assert!(created
+            .name
+            .as_deref()
+            .unwrap()
+            .contains("cachedContents/1"));
+
+        let got = caches.get("cachedContents/1").await.unwrap();
+        assert!(got.name.as_deref().unwrap().contains("cachedContents/1"));
+
+        let updated = caches
+            .update("cachedContents/1", UpdateCachedContentConfig::default())
+            .await
+            .unwrap();
+        assert!(updated
+            .name
+            .as_deref()
+            .unwrap()
+            .contains("cachedContents/1"));
+
+        caches.delete("cachedContents/1").await.unwrap();
+
+        let list = caches
+            .list_with_config(ListCachedContentsConfig {
+                page_size: Some(2),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(list.cached_contents.unwrap().len(), 1);
+
+        let all = caches
+            .all_with_config(ListCachedContentsConfig {
+                page_size: Some(2),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
     }
 }

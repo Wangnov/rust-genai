@@ -21,7 +21,7 @@ pub struct Chats {
 }
 
 impl Chats {
-    pub(crate) fn new(inner: Arc<ClientInner>) -> Self {
+    pub(crate) const fn new(inner: Arc<ClientInner>) -> Self {
         Self { inner }
     }
 
@@ -69,6 +69,9 @@ impl ChatSession {
     }
 
     /// 发送消息。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn send_message(
         &self,
         message: impl Into<String>,
@@ -98,11 +101,17 @@ impl ChatSession {
     }
 
     /// 发送消息（兼容别名）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn send(&self, message: impl Into<String>) -> Result<GenerateContentResponse> {
         self.send_message(message).await
     }
 
     /// 流式发送消息。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn send_message_stream(
         &self,
         message: impl Into<String>,
@@ -156,6 +165,9 @@ impl ChatSession {
     }
 
     /// 流式发送消息（兼容别名）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn send_stream(
         &self,
         message: impl Into<String>,
@@ -164,6 +176,9 @@ impl ChatSession {
     }
 
     /// 发送消息（自动函数调用 + callable tools）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn send_message_with_callable_tools(
         &self,
         message: impl Into<String>,
@@ -204,6 +219,9 @@ impl ChatSession {
     }
 
     /// 流式发送消息（自动函数调用 + callable tools）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn send_message_stream_with_callable_tools(
         &self,
         message: impl Into<String>,

@@ -24,11 +24,14 @@ pub struct LiveMusic {
 }
 
 impl LiveMusic {
-    pub(crate) fn new(inner: Arc<ClientInner>) -> Self {
+    pub(crate) const fn new(inner: Arc<ClientInner>) -> Self {
         Self { inner }
     }
 
     /// 连接到 Live Music API。
+    ///
+    /// # Errors
+    /// 当连接失败或配置无效时返回错误。
     pub async fn connect(&self, model: impl Into<String>) -> Result<LiveMusicSession> {
         connect_live_music_session(self.inner.clone(), model.into()).await
     }
@@ -42,6 +45,9 @@ pub struct LiveMusicSession {
 
 impl LiveMusicSession {
     /// 设置加权提示词。
+    ///
+    /// # Errors
+    /// 当配置无效或发送失败时返回错误。
     pub async fn set_weighted_prompts(&self, prompts: Vec<WeightedPrompt>) -> Result<()> {
         if prompts.is_empty() {
             return Err(Error::InvalidConfig {
@@ -56,10 +62,13 @@ impl LiveMusicSession {
             music_generation_config: None,
             playback_control: None,
         };
-        self.send(message)
+        self.send_async(message).await
     }
 
     /// 设置音乐生成配置。
+    ///
+    /// # Errors
+    /// 当发送失败时返回错误。
     pub async fn set_music_generation_config(
         &self,
         config: Option<LiveMusicGenerationConfig>,
@@ -70,27 +79,40 @@ impl LiveMusicSession {
             music_generation_config: Some(config.unwrap_or_default()),
             playback_control: None,
         };
-        self.send(message)
+        self.send_async(message).await
     }
 
     /// 播放。
+    ///
+    /// # Errors
+    /// 当发送失败时返回错误。
     pub async fn play(&self) -> Result<()> {
-        self.send_playback(LiveMusicPlaybackControl::Play)
+        self.send_playback(LiveMusicPlaybackControl::Play).await
     }
 
     /// 暂停。
+    ///
+    /// # Errors
+    /// 当发送失败时返回错误。
     pub async fn pause(&self) -> Result<()> {
-        self.send_playback(LiveMusicPlaybackControl::Pause)
+        self.send_playback(LiveMusicPlaybackControl::Pause).await
     }
 
     /// 停止。
+    ///
+    /// # Errors
+    /// 当发送失败时返回错误。
     pub async fn stop(&self) -> Result<()> {
-        self.send_playback(LiveMusicPlaybackControl::Stop)
+        self.send_playback(LiveMusicPlaybackControl::Stop).await
     }
 
     /// 重置上下文。
+    ///
+    /// # Errors
+    /// 当发送失败时返回错误。
     pub async fn reset_context(&self) -> Result<()> {
         self.send_playback(LiveMusicPlaybackControl::ResetContext)
+            .await
     }
 
     /// 接收服务器消息。
@@ -99,27 +121,37 @@ impl LiveMusicSession {
     }
 
     /// 关闭会话。
+    ///
+    /// # Errors
+    /// 当发送关闭信号失败时返回错误。
     pub async fn close(mut self) -> Result<()> {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
+        tokio::task::yield_now().await;
         Ok(())
     }
 
-    fn send_playback(&self, control: LiveMusicPlaybackControl) -> Result<()> {
+    async fn send_playback(&self, control: LiveMusicPlaybackControl) -> Result<()> {
         let message = LiveMusicClientMessage {
             setup: None,
             client_content: None,
             music_generation_config: None,
             playback_control: Some(control),
         };
-        self.send(message)
+        self.send_async(message).await
     }
 
     fn send(&self, message: LiveMusicClientMessage) -> Result<()> {
         self.outgoing_tx
             .send(message)
             .map_err(|_| Error::ChannelClosed)?;
+        Ok(())
+    }
+
+    async fn send_async(&self, message: LiveMusicClientMessage) -> Result<()> {
+        self.send(message)?;
+        tokio::task::yield_now().await;
         Ok(())
     }
 }
@@ -154,7 +186,7 @@ async fn connect_live_music_session(
         api_key,
     )?;
 
-    let request = build_ws_request(url, headers)?;
+    let request = build_ws_request(&url, &headers)?;
     let (ws_stream, _) = connect_async(request).await?;
     let (mut write, mut read) = ws_stream.split();
 
@@ -222,8 +254,8 @@ fn normalize_model_name(model: &str) -> String {
 }
 
 fn build_ws_request(
-    url: Url,
-    headers: HeaderMap,
+    url: &Url,
+    headers: &HeaderMap,
 ) -> Result<tokio_tungstenite::tungstenite::http::Request<()>> {
     let mut request = url
         .as_str()
@@ -233,7 +265,7 @@ fn build_ws_request(
         })?;
     {
         let request_headers = request.headers_mut();
-        for (key, value) in headers.iter() {
+        for (key, value) in headers {
             request_headers.insert(key, value.clone());
         }
     }
@@ -250,20 +282,16 @@ fn build_live_music_ws_url(
     })?;
 
     let scheme = match url.scheme() {
-        "https" => "wss",
-        "http" => "ws",
-        "wss" => "wss",
-        "ws" => "ws",
+        "http" | "ws" => "ws",
         _ => "wss",
     };
-    url.set_scheme(scheme).map_err(|_| Error::InvalidConfig {
+    url.set_scheme(scheme).map_err(|()| Error::InvalidConfig {
         message: "Invalid base_url scheme".into(),
     })?;
 
     let base_path = url.path().trim_end_matches('/');
     let path = format!(
-        "{}/ws/google.ai.generativelanguage.{}.GenerativeService.BidiGenerateMusic",
-        base_path, api_version
+        "{base_path}/ws/google.ai.generativelanguage.{api_version}.GenerativeService.BidiGenerateMusic"
     );
     url.set_path(&path);
     url.set_query(Some(&format!("key={api_key}")));
@@ -289,9 +317,7 @@ fn parse_server_message(message: Message) -> Result<Option<LiveMusicServerMessag
             let msg = serde_json::from_slice::<LiveMusicServerMessage>(&data)?;
             Ok(Some(msg))
         }
-        Message::Ping(_) | Message::Pong(_) => Ok(None),
-        Message::Close(_) => Ok(None),
-        _ => Ok(None),
+        Message::Ping(_) | Message::Pong(_) | Message::Close(_) | Message::Frame(_) => Ok(None),
     }
 }
 
@@ -363,6 +389,9 @@ async fn message_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_client_inner_with_api_key;
+    use rust_genai_types::live_music_types::LiveMusicServerSetupComplete;
+    use tokio::sync::{mpsc, oneshot};
 
     #[test]
     fn test_build_live_music_ws_url() {
@@ -379,5 +408,156 @@ mod tests {
         );
         assert!(url.as_str().contains("key=test-key"));
         assert!(headers.contains_key("x-goog-api-key"));
+    }
+
+    #[tokio::test]
+    async fn test_live_music_session_send_and_close() {
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel();
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let session = LiveMusicSession {
+            outgoing_tx,
+            incoming_rx,
+            shutdown_tx: Some(shutdown_tx),
+        };
+
+        let err = session.set_weighted_prompts(vec![]).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        session
+            .set_weighted_prompts(vec![WeightedPrompt {
+                text: Some("hi".to_string()),
+                weight: Some(1.0),
+            }])
+            .await
+            .unwrap();
+        let msg = outgoing_rx.recv().await.unwrap();
+        assert!(msg.client_content.is_some());
+
+        session
+            .set_music_generation_config(Some(LiveMusicGenerationConfig {
+                temperature: Some(0.2),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let msg = outgoing_rx.recv().await.unwrap();
+        assert!(msg.music_generation_config.is_some());
+
+        session.play().await.unwrap();
+        let msg = outgoing_rx.recv().await.unwrap();
+        assert!(matches!(
+            msg.playback_control,
+            Some(LiveMusicPlaybackControl::Play)
+        ));
+
+        session.pause().await.unwrap();
+        let msg = outgoing_rx.recv().await.unwrap();
+        assert!(matches!(
+            msg.playback_control,
+            Some(LiveMusicPlaybackControl::Pause)
+        ));
+
+        session.stop().await.unwrap();
+        let msg = outgoing_rx.recv().await.unwrap();
+        assert!(matches!(
+            msg.playback_control,
+            Some(LiveMusicPlaybackControl::Stop)
+        ));
+
+        session.reset_context().await.unwrap();
+        let msg = outgoing_rx.recv().await.unwrap();
+        assert!(matches!(
+            msg.playback_control,
+            Some(LiveMusicPlaybackControl::ResetContext)
+        ));
+
+        session.close().await.unwrap();
+        assert!(shutdown_rx.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_live_music_session_send_channel_closed() {
+        let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
+        drop(outgoing_rx);
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+        let session = LiveMusicSession {
+            outgoing_tx,
+            incoming_rx,
+            shutdown_tx: None,
+        };
+        let err = session.play().await.unwrap_err();
+        assert!(matches!(err, Error::ChannelClosed));
+    }
+
+    #[tokio::test]
+    async fn test_connect_live_music_session_errors() {
+        let inner = Arc::new(test_client_inner_with_api_key(
+            Backend::VertexAi,
+            Some("key"),
+        ));
+        let err = connect_live_music_session(inner, "model".to_string())
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let inner = Arc::new(test_client_inner_with_api_key(Backend::GeminiApi, None));
+        let err = connect_live_music_session(inner, "model".to_string())
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let inner = Arc::new(test_client_inner_with_api_key(
+            Backend::GeminiApi,
+            Some("auth_tokens/abc"),
+        ));
+        let err = connect_live_music_session(inner, "model".to_string())
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_build_live_music_ws_url_invalid_inputs() {
+        let err = build_live_music_ws_url("://bad", "v1beta", "test-key").unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let err =
+            build_live_music_ws_url("https://example.com/", "v1beta", "bad\nkey").unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_parse_live_music_message_variants() {
+        let text_message = Message::Text(
+            serde_json::to_string(&LiveMusicServerMessage {
+                setup_complete: Some(LiveMusicServerSetupComplete::default()),
+                ..Default::default()
+            })
+            .unwrap()
+            .into(),
+        );
+        assert!(parse_server_message(text_message).unwrap().is_some());
+
+        let bin_message = Message::Binary(
+            serde_json::to_vec(&LiveMusicServerMessage {
+                setup_complete: Some(LiveMusicServerSetupComplete::default()),
+                ..Default::default()
+            })
+            .unwrap()
+            .into(),
+        );
+        assert!(parse_server_message(bin_message).unwrap().is_some());
+
+        assert!(parse_server_message(Message::Ping(vec![1].into()))
+            .unwrap()
+            .is_none());
+        assert!(parse_server_message(Message::Close(None))
+            .unwrap()
+            .is_none());
+        assert!(parse_server_message(Message::Text("bad-json".into())).is_err());
     }
 }

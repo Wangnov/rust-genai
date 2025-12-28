@@ -14,7 +14,7 @@ const DEFAULT_TOKEN_CACHE_FILE: &str = "token.json";
 const EXPIRY_SKEW_SECONDS: u64 = 20;
 
 #[derive(Debug, Clone)]
-pub(crate) struct OAuthTokenProvider {
+pub struct OAuthTokenProvider {
     client_id: String,
     client_secret: String,
     refresh_token: String,
@@ -106,6 +106,7 @@ impl OAuthTokenProvider {
 
         let refreshed = self.refresh_token().await?;
         *guard = Some(refreshed.clone());
+        drop(guard);
         Ok(refreshed.access_token)
     }
 
@@ -141,21 +142,16 @@ impl OAuthTokenProvider {
 
     async fn update_token_cache(&self, token: &CachedToken) -> Result<()> {
         let existing = tokio::fs::read_to_string(&self.token_cache_path).await;
-        let mut value = match existing {
-            Ok(content) => serde_json::from_str::<Value>(&content).unwrap_or(Value::Null),
-            Err(_) => Value::Null,
-        };
+        let mut value = existing.map_or(Value::Null, |content| {
+            serde_json::from_str::<Value>(&content).unwrap_or(Value::Null)
+        });
 
-        let map = match &mut value {
-            Value::Object(map) => map,
-            _ => {
-                value = Value::Object(Map::new());
-                match &mut value {
-                    Value::Object(map) => map,
-                    _ => unreachable!("value just initialized to object"),
-                }
-            }
-        };
+        if !value.is_object() {
+            value = Value::Object(Map::new());
+        }
+        let map = value
+            .as_object_mut()
+            .unwrap_or_else(|| unreachable!("value just initialized to object"));
 
         map.insert(
             "access_token".to_string(),
@@ -257,4 +253,275 @@ fn load_token_cache(path: &Path) -> Result<TokenCacheFile> {
     serde_json::from_str(&content).map_err(|err| Error::InvalidConfig {
         message: format!("Failed to parse token cache {}: {err}", path.display()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
+    use tokio::time::sleep;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn cached_token_expiry_check() {
+        let expired = CachedToken {
+            access_token: "t".into(),
+            expires_at: Instant::now()
+                .checked_sub(Duration::from_secs(30))
+                .unwrap_or_else(Instant::now),
+            expires_in: 60,
+        };
+        assert!(expired.is_expired());
+
+        let fresh = CachedToken {
+            access_token: "t".into(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_in: 3600,
+        };
+        assert!(!fresh.is_expired());
+    }
+
+    #[test]
+    fn load_client_secret_requires_section() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("client_secret.json");
+        fs::write(&path, "{}").unwrap();
+        let result = load_client_secret(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_client_secret_accepts_web_section() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("client_secret.json");
+        let payload = json!({
+            "web": {
+                "client_id": "web-client",
+                "client_secret": "web-secret",
+                "token_uri": "https://example.com/token"
+            }
+        });
+        fs::write(&path, payload.to_string()).unwrap();
+        let parsed = load_client_secret(&path).unwrap();
+        assert_eq!(parsed.client_id, "web-client");
+        assert_eq!(parsed.client_secret, "web-secret");
+        assert_eq!(
+            parsed.token_uri.as_deref(),
+            Some("https://example.com/token")
+        );
+    }
+
+    #[test]
+    fn load_token_cache_missing_file_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing.json");
+        let err = load_token_cache(&path).unwrap_err();
+        assert!(err.to_string().contains("Please generate token.json first"));
+    }
+
+    #[test]
+    fn load_token_cache_invalid_json_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("token.json");
+        fs::write(&path, "{not valid json").unwrap();
+        let err = load_token_cache(&path).unwrap_err();
+        assert!(err.to_string().contains("Failed to parse token cache"));
+    }
+
+    #[test]
+    fn from_paths_rejects_mismatched_client_id() {
+        let dir = tempdir().unwrap();
+        let secret_path = dir.path().join("client_secret.json");
+        let token_path = dir.path().join("token.json");
+
+        let client_secret = json!({
+            "installed": {
+                "client_id": "client-a",
+                "client_secret": "secret-a"
+            }
+        });
+        fs::write(&secret_path, client_secret.to_string()).unwrap();
+
+        let token_cache = json!({
+            "refresh_token": "refresh",
+            "client_id": "client-b"
+        });
+        fs::write(&token_path, token_cache.to_string()).unwrap();
+
+        let result = OAuthTokenProvider::from_paths(&secret_path, Some(token_path));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_paths_rejects_mismatched_client_secret() {
+        let dir = tempdir().unwrap();
+        let secret_path = dir.path().join("client_secret.json");
+        let token_path = dir.path().join("token.json");
+
+        let client_secret = json!({
+            "installed": {
+                "client_id": "client-a",
+                "client_secret": "secret-a"
+            }
+        });
+        fs::write(&secret_path, client_secret.to_string()).unwrap();
+
+        let token_cache = json!({
+            "refresh_token": "refresh",
+            "client_secret": "secret-b"
+        });
+        fs::write(&token_path, token_cache.to_string()).unwrap();
+
+        let result = OAuthTokenProvider::from_paths(&secret_path, Some(token_path));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_paths_requires_refresh_token() {
+        let dir = tempdir().unwrap();
+        let secret_path = dir.path().join("client_secret.json");
+        let token_path = dir.path().join("token.json");
+
+        let client_secret = json!({
+            "installed": {
+                "client_id": "client-a",
+                "client_secret": "secret-a"
+            }
+        });
+        fs::write(&secret_path, client_secret.to_string()).unwrap();
+
+        let token_cache = json!({
+            "client_id": "client-a",
+            "client_secret": "secret-a"
+        });
+        fs::write(&token_path, token_cache.to_string()).unwrap();
+
+        let result = OAuthTokenProvider::from_paths(&secret_path, Some(token_path));
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_token_updates_cache() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "access-1",
+                "expires_in": 3600
+            })))
+            .mount(&server)
+            .await;
+
+        let dir = tempdir().unwrap();
+        let secret_path = dir.path().join("client_secret.json");
+        let token_path = dir.path().join("token.json");
+
+        let token_uri = format!("{}/token", server.uri());
+        let client_secret = json!({
+            "installed": {
+                "client_id": "client-a",
+                "client_secret": "secret-a",
+                "token_uri": token_uri
+            }
+        });
+        fs::write(&secret_path, client_secret.to_string()).unwrap();
+
+        let token_cache = json!({
+            "refresh_token": "refresh-1",
+            "token_uri": format!("{}/token", server.uri())
+        });
+        fs::write(&token_path, token_cache.to_string()).unwrap();
+
+        let provider =
+            OAuthTokenProvider::from_paths(&secret_path, Some(token_path.clone())).unwrap();
+        let token = provider.token().await.unwrap();
+        assert_eq!(token, "access-1");
+
+        // Ensure cache file was updated.
+        let cached = fs::read_to_string(&token_path).unwrap();
+        let parsed: Value = serde_json::from_str(&cached).unwrap();
+        assert_eq!(parsed["access_token"], "access-1");
+        assert_eq!(parsed["token"], "access-1");
+
+        // Second call should hit cache (no new request); allow brief delay to avoid race.
+        sleep(Duration::from_millis(10)).await;
+        let token2 = provider.token().await.unwrap();
+        assert_eq!(token2, "access-1");
+    }
+
+    #[tokio::test]
+    async fn refresh_token_non_success_returns_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad"))
+            .mount(&server)
+            .await;
+
+        let dir = tempdir().unwrap();
+        let secret_path = dir.path().join("client_secret.json");
+        let token_path = dir.path().join("token.json");
+
+        let token_uri = format!("{}/token", server.uri());
+        let client_secret = json!({
+            "installed": {
+                "client_id": "client-a",
+                "client_secret": "secret-a",
+                "token_uri": token_uri
+            }
+        });
+        fs::write(&secret_path, client_secret.to_string()).unwrap();
+
+        let token_cache = json!({
+            "refresh_token": "refresh-1",
+            "token_uri": format!("{}/token", server.uri())
+        });
+        fs::write(&token_path, token_cache.to_string()).unwrap();
+
+        let provider = OAuthTokenProvider::from_paths(&secret_path, Some(token_path)).unwrap();
+        let err = provider.token().await.unwrap_err();
+        assert!(err.to_string().contains("OAuth token refresh failed"));
+    }
+
+    #[tokio::test]
+    async fn refresh_token_replaces_non_object_cache() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "access-2",
+                "expires_in": 120
+            })))
+            .mount(&server)
+            .await;
+
+        let dir = tempdir().unwrap();
+        let secret_path = dir.path().join("client_secret.json");
+        let token_path = dir.path().join("token.json");
+
+        let client_secret = json!({
+            "installed": {
+                "client_id": "client-a",
+                "client_secret": "secret-a",
+                "token_uri": format!("{}/token", server.uri())
+            }
+        });
+        fs::write(&secret_path, client_secret.to_string()).unwrap();
+
+        let token_cache = json!({
+            "refresh_token": "refresh-2",
+            "token_uri": format!("{}/token", server.uri())
+        });
+        fs::write(&token_path, token_cache.to_string()).unwrap();
+
+        let provider =
+            OAuthTokenProvider::from_paths(&secret_path, Some(token_path.clone())).unwrap();
+        fs::write(&token_path, "[]").unwrap();
+        let token = provider.token().await.unwrap();
+        assert_eq!(token, "access-2");
+
+        let cached = fs::read_to_string(&token_path).unwrap();
+        let parsed: Value = serde_json::from_str(&cached).unwrap();
+        assert_eq!(parsed["access_token"], "access-2");
+    }
 }

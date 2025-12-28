@@ -20,11 +20,14 @@ pub struct Batches {
 }
 
 impl Batches {
-    pub(crate) fn new(inner: Arc<ClientInner>) -> Self {
+    pub(crate) const fn new(inner: Arc<ClientInner>) -> Self {
         Self { inner }
     }
 
     /// 创建批处理任务。
+    ///
+    /// # Errors
+    /// 当请求失败、服务端返回错误或响应解析失败时返回错误。
     pub async fn create(
         &self,
         model: impl Into<String>,
@@ -32,7 +35,7 @@ impl Batches {
         mut config: CreateBatchJobConfig,
     ) -> Result<BatchJob> {
         let http_options = config.http_options.take();
-        let model = normalize_batch_model(&self.inner, &model.into())?;
+        let model = normalize_batch_model(&self.inner, &model.into());
 
         let body = match self.inner.config.backend {
             Backend::GeminiApi => build_gemini_batch_body(&self.inner, &model, &src, &config)?,
@@ -51,16 +54,22 @@ impl Batches {
             });
         }
         let value = response.json::<Value>().await?;
-        parse_batch_job_response(&self.inner, value)
+        parse_batch_job_response(&self.inner, &value)
     }
 
     /// 获取批处理任务。
+    ///
+    /// # Errors
+    /// 当请求失败、服务端返回错误或响应解析失败时返回错误。
     pub async fn get(&self, name: impl AsRef<str>) -> Result<BatchJob> {
         self.get_with_config(name, GetBatchJobConfig::default())
             .await
     }
 
     /// 获取批处理任务（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败、服务端返回错误或响应解析失败时返回错误。
     pub async fn get_with_config(
         &self,
         name: impl AsRef<str>,
@@ -68,7 +77,7 @@ impl Batches {
     ) -> Result<BatchJob> {
         let http_options = config.http_options.take();
         let name = normalize_batch_job_name(&self.inner, name.as_ref())?;
-        let url = build_batch_job_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_batch_job_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -80,16 +89,22 @@ impl Batches {
             });
         }
         let value = response.json::<Value>().await?;
-        parse_batch_job_response(&self.inner, value)
+        parse_batch_job_response(&self.inner, &value)
     }
 
     /// 删除批处理任务。
+    ///
+    /// # Errors
+    /// 当请求失败或服务端返回错误时返回错误。
     pub async fn delete(&self, name: impl AsRef<str>) -> Result<()> {
         self.delete_with_config(name, DeleteBatchJobConfig::default())
             .await
     }
 
     /// 删除批处理任务（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或服务端返回错误时返回错误。
     pub async fn delete_with_config(
         &self,
         name: impl AsRef<str>,
@@ -97,7 +112,7 @@ impl Batches {
     ) -> Result<()> {
         let http_options = config.http_options.take();
         let name = normalize_batch_job_name(&self.inner, name.as_ref())?;
-        let url = build_batch_job_url(&self.inner, &name, http_options.as_ref())?;
+        let url = build_batch_job_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -112,18 +127,24 @@ impl Batches {
     }
 
     /// 列出批处理任务。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn list(&self) -> Result<ListBatchJobsResponse> {
         self.list_with_config(ListBatchJobsConfig::default()).await
     }
 
     /// 列出批处理任务（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn list_with_config(
         &self,
         mut config: ListBatchJobsConfig,
     ) -> Result<ListBatchJobsResponse> {
         let http_options = config.http_options.take();
         let url = build_batch_list_url(&self.inner, http_options.as_ref())?;
-        let url = add_list_query_params(&self.inner, url, &config)?;
+        let url = add_list_query_params(&self.inner, &url, &config)?;
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -135,21 +156,27 @@ impl Batches {
             });
         }
         let value = response.json::<Value>().await?;
-        parse_batch_job_list_response(&self.inner, value)
+        parse_batch_job_list_response(&self.inner, &value)
     }
 
     /// 列出所有批处理任务（自动翻页）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn all(&self) -> Result<Vec<BatchJob>> {
         self.all_with_config(ListBatchJobsConfig::default()).await
     }
 
     /// 列出所有批处理任务（带配置，自动翻页）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
     pub async fn all_with_config(&self, mut config: ListBatchJobsConfig) -> Result<Vec<BatchJob>> {
         let mut jobs = Vec::new();
         let http_options = config.http_options.clone();
         loop {
             let mut page_config = config.clone();
-            page_config.http_options = http_options.clone();
+            page_config.http_options.clone_from(&http_options);
             let response = self.list_with_config(page_config).await?;
             if let Some(items) = response.batch_jobs {
                 jobs.extend(items);
@@ -165,13 +192,13 @@ impl Batches {
     }
 }
 
-fn normalize_batch_model(inner: &ClientInner, model: &str) -> Result<String> {
+fn normalize_batch_model(inner: &ClientInner, model: &str) -> String {
     match inner.config.backend {
         Backend::GeminiApi => {
             if model.starts_with("models/") || model.starts_with("tunedModels/") {
-                Ok(model.to_string())
+                model.to_string()
             } else {
-                Ok(format!("models/{model}"))
+                format!("models/{model}")
             }
         }
         Backend::VertexAi => {
@@ -179,11 +206,11 @@ fn normalize_batch_model(inner: &ClientInner, model: &str) -> Result<String> {
                 || model.starts_with("publishers/")
                 || model.starts_with("models/")
             {
-                Ok(model.to_string())
+                model.to_string()
             } else if let Some((publisher, name)) = model.split_once('/') {
-                Ok(format!("publishers/{publisher}/models/{name}"))
+                format!("publishers/{publisher}/models/{name}")
             } else {
-                Ok(format!("publishers/google/models/{model}"))
+                format!("publishers/google/models/{model}")
             }
         }
     }
@@ -261,14 +288,14 @@ fn build_batch_job_url(
     inner: &ClientInner,
     name: &str,
     http_options: Option<&rust_genai_types::http::HttpOptions>,
-) -> Result<String> {
+) -> String {
     let base = http_options
         .and_then(|opts| opts.base_url.as_deref())
         .unwrap_or(&inner.api_client.base_url);
     let version = http_options
         .and_then(|opts| opts.api_version.as_deref())
         .unwrap_or(&inner.api_client.api_version);
-    Ok(format!("{base}{version}/{name}"))
+    format!("{base}{version}/{name}")
 }
 
 fn build_batch_list_url(
@@ -303,7 +330,7 @@ fn build_batch_list_url(
 
 fn add_list_query_params(
     inner: &ClientInner,
-    url: String,
+    url: &str,
     config: &ListBatchJobsConfig,
 ) -> Result<String> {
     if inner.config.backend == Backend::GeminiApi && config.filter.is_some() {
@@ -311,7 +338,7 @@ fn add_list_query_params(
             message: "filter is not supported for Gemini API batch list".into(),
         });
     }
-    let mut url = reqwest::Url::parse(&url).map_err(|err| Error::InvalidConfig {
+    let mut url = reqwest::Url::parse(url).map_err(|err| Error::InvalidConfig {
         message: err.to_string(),
     })?;
     {
@@ -480,7 +507,7 @@ fn build_inlined_request(inner: &ClientInner, request: &InlinedRequest) -> Resul
     if let Some(model) = &request.model {
         request_map.insert(
             "model".to_string(),
-            Value::String(normalize_batch_model(inner, model)?),
+            Value::String(normalize_batch_model(inner, model)),
         );
     }
     if let Some(contents) = &request.contents {
@@ -502,19 +529,19 @@ fn build_inlined_request(inner: &ClientInner, request: &InlinedRequest) -> Resul
     Ok(Value::Object(entry))
 }
 
-fn parse_batch_job_response(inner: &ClientInner, value: Value) -> Result<BatchJob> {
+fn parse_batch_job_response(inner: &ClientInner, value: &Value) -> Result<BatchJob> {
     match inner.config.backend {
-        Backend::GeminiApi => parse_batch_job_from_mldev(value),
+        Backend::GeminiApi => Ok(parse_batch_job_from_mldev(value)),
         Backend::VertexAi => parse_batch_job_from_vertex(value),
     }
 }
 
-fn parse_batch_job_from_mldev(value: Value) -> Result<BatchJob> {
+fn parse_batch_job_from_mldev(value: &Value) -> BatchJob {
     let name = value
         .get("name")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string);
-    let metadata = value.get("metadata").and_then(|v| v.as_object());
+    let metadata = value.get("metadata").and_then(Value::as_object);
     let mut batch = BatchJob {
         name,
         ..Default::default()
@@ -523,33 +550,33 @@ fn parse_batch_job_from_mldev(value: Value) -> Result<BatchJob> {
     if let Some(metadata) = metadata {
         batch.display_name = metadata
             .get("displayName")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string);
         batch.state = metadata
             .get("state")
             .and_then(|v| serde_json::from_value::<JobState>(v.clone()).ok());
         batch.create_time = metadata
             .get("createTime")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string);
         batch.end_time = metadata
             .get("endTime")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string);
         batch.update_time = metadata
             .get("updateTime")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string);
         batch.model = metadata
             .get("model")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string);
         if let Some(output) = metadata.get("output") {
             batch.dest = parse_batch_destination_from_mldev(output);
         }
     }
 
-    Ok(batch)
+    batch
 }
 
 fn parse_batch_destination_from_mldev(value: &Value) -> Option<BatchJobDestination> {
@@ -557,7 +584,7 @@ fn parse_batch_destination_from_mldev(value: &Value) -> Option<BatchJobDestinati
     let mut dest = BatchJobDestination {
         file_name: output
             .get("responsesFile")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string),
         ..Default::default()
     };
@@ -577,16 +604,16 @@ fn parse_batch_destination_from_mldev(value: &Value) -> Option<BatchJobDestinati
     Some(dest)
 }
 
-fn parse_batch_job_from_vertex(value: Value) -> Result<BatchJob> {
+fn parse_batch_job_from_vertex(value: &Value) -> Result<BatchJob> {
     let mut batch = BatchJob::default();
     let obj = value.as_object().ok_or_else(|| Error::Parse {
         message: "BatchJob response must be object".into(),
     })?;
 
-    batch.name = obj.get("name").and_then(|v| v.as_str()).map(str::to_string);
+    batch.name = obj.get("name").and_then(Value::as_str).map(str::to_string);
     batch.display_name = obj
         .get("displayName")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string);
     batch.state = obj
         .get("state")
@@ -596,24 +623,21 @@ fn parse_batch_job_from_vertex(value: Value) -> Result<BatchJob> {
         .and_then(|v| serde_json::from_value(v.clone()).ok());
     batch.create_time = obj
         .get("createTime")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string);
     batch.start_time = obj
         .get("startTime")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string);
     batch.end_time = obj
         .get("endTime")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string);
     batch.update_time = obj
         .get("updateTime")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string);
-    batch.model = obj
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
+    batch.model = obj.get("model").and_then(Value::as_str).map(str::to_string);
 
     if let Some(input) = obj.get("inputConfig") {
         batch.src = parse_batch_source_from_vertex(input);
@@ -633,7 +657,7 @@ fn parse_batch_source_from_vertex(value: &Value) -> Option<BatchJobSource> {
     let src = BatchJobSource {
         format: obj
             .get("instancesFormat")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string),
         gcs_uri: obj
             .get("gcsSource")
@@ -642,7 +666,7 @@ fn parse_batch_source_from_vertex(value: &Value) -> Option<BatchJobSource> {
         bigquery_uri: obj
             .get("bigquerySource")
             .and_then(|v| v.get("inputUri"))
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string),
         ..Default::default()
     };
@@ -658,17 +682,17 @@ fn parse_batch_destination_from_vertex(value: &Value) -> Option<BatchJobDestinat
     let dest = BatchJobDestination {
         format: obj
             .get("predictionsFormat")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string),
         gcs_uri: obj
             .get("gcsDestination")
             .and_then(|v| v.get("outputUriPrefix"))
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string),
         bigquery_uri: obj
             .get("bigqueryDestination")
             .and_then(|v| v.get("outputUri"))
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::to_string),
         ..Default::default()
     };
@@ -681,7 +705,7 @@ fn parse_batch_destination_from_vertex(value: &Value) -> Option<BatchJobDestinat
 
 fn parse_batch_job_list_response(
     inner: &ClientInner,
-    value: Value,
+    value: &Value,
 ) -> Result<ListBatchJobsResponse> {
     let mut resp = ListBatchJobsResponse::default();
     let obj = value.as_object().ok_or_else(|| Error::Parse {
@@ -689,26 +713,24 @@ fn parse_batch_job_list_response(
     })?;
     resp.next_page_token = obj
         .get("nextPageToken")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string);
 
     match inner.config.backend {
         Backend::GeminiApi => {
-            if let Some(operations) = obj.get("operations").and_then(|v| v.as_array()) {
+            if let Some(operations) = obj.get("operations").and_then(Value::as_array) {
                 let mut jobs = Vec::new();
                 for op in operations {
-                    if let Ok(job) = parse_batch_job_from_mldev(op.clone()) {
-                        jobs.push(job);
-                    }
+                    jobs.push(parse_batch_job_from_mldev(op));
                 }
                 resp.batch_jobs = Some(jobs);
             }
         }
         Backend::VertexAi => {
-            if let Some(jobs) = obj.get("batchPredictionJobs").and_then(|v| v.as_array()) {
+            if let Some(jobs) = obj.get("batchPredictionJobs").and_then(Value::as_array) {
                 let mut parsed = Vec::new();
                 for job in jobs {
-                    if let Ok(job) = parse_batch_job_from_vertex(job.clone()) {
+                    if let Ok(job) = parse_batch_job_from_vertex(job) {
                         parsed.push(job);
                     }
                 }
@@ -747,26 +769,513 @@ fn apply_http_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{ApiClient, Backend, ClientConfig, ClientInner, Credentials, HttpOptions};
+    use crate::test_support::{
+        test_client_inner, test_client_inner_with_base, test_vertex_inner_missing_config,
+    };
+    use rust_genai_types::config::GenerationConfig;
+    use rust_genai_types::content::Content;
+    use rust_genai_types::models::GenerateContentConfig;
+    use serde_json::json;
+    use wiremock::matchers::{method, path, query_param, query_param_is_missing};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_normalize_batch_job_name_gemini() {
-        let config = ClientConfig {
-            api_key: Some("test-key".into()),
-            backend: Backend::GeminiApi,
-            vertex_config: None,
-            http_options: HttpOptions::default(),
-            credentials: Credentials::ApiKey("test-key".into()),
-            auth_scopes: Vec::new(),
-        };
-        let api_client = ApiClient::new(&config).unwrap();
-        let inner = ClientInner {
-            http: reqwest::Client::new(),
-            config,
-            api_client,
-            auth_provider: None,
-        };
+        let inner = test_client_inner(Backend::GeminiApi);
         let name = normalize_batch_job_name(&inner, "abc-123").unwrap();
         assert_eq!(name, "batches/abc-123");
+    }
+
+    #[test]
+    fn test_normalize_batch_model_and_job_vertex() {
+        let inner = test_client_inner(Backend::VertexAi);
+        let model = normalize_batch_model(&inner, "gemini-1.5-pro");
+        assert_eq!(model, "publishers/google/models/gemini-1.5-pro");
+        let model = normalize_batch_model(&inner, "acme/custom");
+        assert_eq!(model, "publishers/acme/models/custom");
+
+        assert_eq!(
+            normalize_batch_job_name(&inner, "projects/x/locations/y/batchPredictionJobs/z")
+                .unwrap(),
+            "projects/x/locations/y/batchPredictionJobs/z"
+        );
+        assert_eq!(
+            normalize_batch_job_name(&inner, "locations/us/batchPredictionJobs/1").unwrap(),
+            "projects/proj/locations/us/batchPredictionJobs/1"
+        );
+        assert_eq!(
+            normalize_batch_job_name(&inner, "batchPredictionJobs/2").unwrap(),
+            "projects/proj/locations/loc/batchPredictionJobs/2"
+        );
+        assert_eq!(
+            normalize_batch_job_name(&inner, "job-3").unwrap(),
+            "projects/proj/locations/loc/batchPredictionJobs/job-3"
+        );
+    }
+
+    #[test]
+    fn test_build_batch_configs_and_inlined_requests() {
+        let inner = test_client_inner(Backend::GeminiApi);
+        let mut bad_src = BatchJobSource::default();
+        let err = build_gemini_input_config(&inner, &bad_src).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+        bad_src.format = Some("jsonl".to_string());
+        let err = build_gemini_input_config(&inner, &bad_src).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let src = BatchJobSource {
+            inlined_requests: Some(vec![InlinedRequest {
+                model: Some("gemini-1.5-pro".to_string()),
+                contents: Some(vec![Content::text("hello")]),
+                metadata: Some([("k".to_string(), "v".to_string())].into()),
+                config: None,
+            }]),
+            ..Default::default()
+        };
+        let input = build_gemini_input_config(&inner, &src).unwrap();
+        assert!(input.get("requests").is_some());
+
+        let vertex_src = BatchJobSource {
+            format: Some("jsonl".to_string()),
+            gcs_uri: Some(vec!["gs://in".to_string()]),
+            ..Default::default()
+        };
+        let input = build_vertex_input_config(&vertex_src).unwrap();
+        assert!(input.get("gcsSource").is_some());
+
+        let bad_vertex_src = BatchJobSource {
+            file_name: Some("file.jsonl".to_string()),
+            ..Default::default()
+        };
+        let err = build_vertex_input_config(&bad_vertex_src).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let dest = BatchJobDestination {
+            format: Some("jsonl".to_string()),
+            gcs_uri: Some("gs://out".to_string()),
+            ..Default::default()
+        };
+        let output = build_vertex_output_config(&dest).unwrap();
+        assert!(output.get("gcsDestination").is_some());
+
+        let bad_dest = BatchJobDestination {
+            file_name: Some("out.jsonl".to_string()),
+            ..Default::default()
+        };
+        let err = build_vertex_output_config(&bad_dest).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_parse_batch_job_and_list() {
+        let gemini = test_client_inner(Backend::GeminiApi);
+        let job = parse_batch_job_from_mldev(&json!({
+            "name": "batches/1",
+            "metadata": {
+                "displayName": "job",
+                "state": "JOB_STATE_SUCCEEDED",
+                "createTime": "t1",
+                "endTime": "t2",
+                "updateTime": "t3",
+                "model": "models/1",
+                "output": {
+                    "responsesFile": "file.jsonl"
+                }
+            }
+        }));
+        assert_eq!(job.display_name.as_deref(), Some("job"));
+        assert_eq!(job.dest.unwrap().file_name.as_deref(), Some("file.jsonl"));
+
+        let vertex = test_client_inner(Backend::VertexAi);
+        let vertex_job = parse_batch_job_from_vertex(&json!({
+            "name": "projects/proj/locations/loc/batchPredictionJobs/1",
+            "displayName": "job",
+            "state": "JOB_STATE_RUNNING",
+            "inputConfig": {"instancesFormat": "jsonl"},
+            "outputConfig": {"predictionsFormat": "jsonl", "gcsDestination": {"outputUriPrefix": "gs://out"}},
+            "completionStats": {"successfulCount": "1"}
+        }))
+        .unwrap();
+        assert_eq!(vertex_job.src.unwrap().format.as_deref(), Some("jsonl"));
+        assert_eq!(
+            vertex_job.dest.unwrap().gcs_uri.as_deref(),
+            Some("gs://out")
+        );
+
+        let list = parse_batch_job_list_response(
+            &gemini,
+            &json!({"operations": [ {"name": "batches/1"} ], "nextPageToken": "t"}),
+        )
+        .unwrap();
+        assert_eq!(list.batch_jobs.as_ref().unwrap().len(), 1);
+
+        let list = parse_batch_job_list_response(
+            &vertex,
+            &json!({"batchPredictionJobs": [ {"name": "projects/p/locations/l/batchPredictionJobs/1"} ]}),
+        )
+        .unwrap();
+        assert_eq!(list.batch_jobs.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_add_list_query_params_errors() {
+        let inner = test_client_inner(Backend::GeminiApi);
+        let err = add_list_query_params(
+            &inner,
+            "https://example.com/batches",
+            &ListBatchJobsConfig {
+                filter: Some("state=RUNNING".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_build_batch_urls() {
+        let gemini = test_client_inner(Backend::GeminiApi);
+        let url = build_batch_create_url(&gemini, "models/1", None).unwrap();
+        assert!(url.ends_with("/v1beta/models/1:batchGenerateContent"));
+        let url = build_batch_list_url(&gemini, None).unwrap();
+        assert!(url.ends_with("/v1beta/batches"));
+        let url = build_batch_job_url(&gemini, "batches/1", None);
+        assert!(url.ends_with("/v1beta/batches/1"));
+
+        let vertex = test_client_inner(Backend::VertexAi);
+        let url = build_batch_create_url(&vertex, "publishers/google/models/1", None).unwrap();
+        assert!(url.contains("/projects/proj/locations/loc/batchPredictionJobs"));
+        let url = build_batch_list_url(&vertex, None).unwrap();
+        assert!(url.contains("/projects/proj/locations/loc/batchPredictionJobs"));
+    }
+
+    #[test]
+    fn test_build_batch_urls_vertex_missing_config() {
+        let inner = test_vertex_inner_missing_config();
+        let err = build_batch_create_url(&inner, "publishers/google/models/1", None).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+        let err = build_batch_list_url(&inner, None).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_add_list_query_params_invalid_url_and_vertex_filter() {
+        let inner = test_client_inner(Backend::GeminiApi);
+        let err = add_list_query_params(&inner, "://bad-url", &ListBatchJobsConfig::default())
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let inner = test_client_inner(Backend::VertexAi);
+        let url = add_list_query_params(
+            &inner,
+            "https://example.com/batchPredictionJobs",
+            &ListBatchJobsConfig {
+                filter: Some("state=JOB_STATE_RUNNING".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(url.contains("filter=state%3DJOB_STATE_RUNNING"));
+    }
+
+    #[test]
+    fn test_build_batch_body_includes_display_name_and_config() {
+        let inner = test_client_inner(Backend::GeminiApi);
+        let request = InlinedRequest {
+            model: Some("gemini-1.5-pro".to_string()),
+            contents: Some(vec![Content::text("hello")]),
+            metadata: Some([("key".to_string(), "value".to_string())].into()),
+            config: Some(GenerateContentConfig {
+                generation_config: Some(GenerationConfig {
+                    temperature: Some(0.2),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+        let src = BatchJobSource {
+            inlined_requests: Some(vec![request]),
+            ..Default::default()
+        };
+        let body = build_gemini_batch_body(
+            &inner,
+            "models/1",
+            &src,
+            &CreateBatchJobConfig {
+                display_name: Some("batch-name".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(body
+            .get("batch")
+            .and_then(|v| v.get("displayName"))
+            .is_some());
+        let reqs = body
+            .get("batch")
+            .and_then(|v| v.get("inputConfig"))
+            .and_then(|v| v.get("requests"))
+            .and_then(|v| v.get("requests"))
+            .and_then(Value::as_array)
+            .unwrap();
+        let request = &reqs[0]["request"];
+        assert!(request.get("generationConfig").is_some());
+        assert!(reqs[0].get("metadata").is_some());
+    }
+
+    #[test]
+    fn test_vertex_input_output_config_bigquery_and_empty_errors() {
+        let src = BatchJobSource {
+            format: Some("jsonl".to_string()),
+            bigquery_uri: Some("bq://project.dataset.table".to_string()),
+            ..Default::default()
+        };
+        let input = build_vertex_input_config(&src).unwrap();
+        assert!(input.get("bigquerySource").is_some());
+
+        let dest = BatchJobDestination {
+            format: Some("jsonl".to_string()),
+            bigquery_uri: Some("bq://project.dataset.output".to_string()),
+            ..Default::default()
+        };
+        let output = build_vertex_output_config(&dest).unwrap();
+        assert!(output.get("bigqueryDestination").is_some());
+
+        let err = build_vertex_input_config(&BatchJobSource::default()).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+        let err = build_vertex_output_config(&BatchJobDestination::default()).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_parse_batch_job_from_vertex_errors_and_empty_sources() {
+        let err = parse_batch_job_from_vertex(&Value::Null).unwrap_err();
+        assert!(matches!(err, Error::Parse { .. }));
+
+        let empty = json!({});
+        assert!(parse_batch_source_from_vertex(&empty).is_none());
+        assert!(parse_batch_destination_from_vertex(&empty).is_none());
+    }
+
+    #[test]
+    fn test_parse_batch_list_response_invalid_value() {
+        let inner = test_client_inner(Backend::GeminiApi);
+        let err = parse_batch_job_list_response(&inner, &Value::Null).unwrap_err();
+        assert!(matches!(err, Error::Parse { .. }));
+    }
+
+    #[test]
+    fn test_apply_http_options_success_path() {
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let options = rust_genai_types::http::HttpOptions {
+            timeout: Some(500),
+            headers: Some([("x-ok".to_string(), "ok".to_string())].into()),
+            ..Default::default()
+        };
+        let request = apply_http_options(request, Some(&options)).unwrap();
+        let built = request.build().unwrap();
+        assert_eq!(built.headers().get("x-ok").unwrap(), "ok");
+    }
+
+    #[test]
+    fn test_apply_http_options_invalid_header_value() {
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let options = rust_genai_types::http::HttpOptions {
+            headers: Some([("x-test".to_string(), "bad\nvalue".to_string())].into()),
+            ..Default::default()
+        };
+        let err = apply_http_options(request, Some(&options)).unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_normalize_batch_job_name_vertex_missing_config() {
+        let inner = test_vertex_inner_missing_config();
+        let err = normalize_batch_job_name(&inner, "job").unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_build_batch_bodies_errors() {
+        let inner = test_client_inner(Backend::GeminiApi);
+        let src = BatchJobSource {
+            file_name: Some("file.jsonl".to_string()),
+            ..Default::default()
+        };
+        let err = build_gemini_batch_body(
+            &inner,
+            "models/1",
+            &src,
+            &CreateBatchJobConfig {
+                dest: Some(BatchJobDestination::default()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let inner = test_client_inner(Backend::VertexAi);
+        let err = build_vertex_batch_body(
+            &inner,
+            "models/1",
+            &BatchJobSource {
+                format: Some("jsonl".to_string()),
+                gcs_uri: Some(vec!["gs://input".to_string()]),
+                ..Default::default()
+            },
+            &CreateBatchJobConfig::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn test_parse_batch_destination_mldev_inlined() {
+        let dest = parse_batch_destination_from_mldev(&json!({
+            "responsesFile": "file.jsonl",
+            "inlinedResponses": {"inlinedResponses": [{"response": {"candidates": []}}]},
+            "inlinedEmbedContentResponses": {"inlinedResponses": [{"response": {"embedding": null}}]}
+        }))
+        .unwrap();
+        assert_eq!(dest.file_name.as_deref(), Some("file.jsonl"));
+        assert!(dest.inlined_responses.is_some());
+        assert!(dest.inlined_embed_content_responses.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_batches_vertex_api_flow_create_get_delete() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/batchPredictionJobs",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "projects/proj/locations/loc/batchPredictionJobs/1",
+                "state": "JOB_STATE_SUCCEEDED",
+                "inputConfig": {
+                    "instancesFormat": "jsonl",
+                    "gcsSource": {"uris": ["gs://input"]}
+                },
+                "outputConfig": {
+                    "predictionsFormat": "jsonl",
+                    "gcsDestination": {"outputUriPrefix": "gs://out"}
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/batchPredictionJobs/1",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "projects/proj/locations/loc/batchPredictionJobs/1",
+                "state": "JOB_STATE_SUCCEEDED"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("DELETE"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/batchPredictionJobs/1",
+            ))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let inner = test_client_inner_with_base(Backend::VertexAi, &server.uri(), "v1beta1");
+        let batches = Batches::new(Arc::new(inner));
+
+        let created = batches
+            .create(
+                "gemini-1.5-pro",
+                BatchJobSource {
+                    format: Some("jsonl".to_string()),
+                    gcs_uri: Some(vec!["gs://input".to_string()]),
+                    ..Default::default()
+                },
+                CreateBatchJobConfig {
+                    dest: Some(BatchJobDestination {
+                        format: Some("jsonl".to_string()),
+                        gcs_uri: Some("gs://out".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(created
+            .name
+            .as_deref()
+            .unwrap()
+            .contains("batchPredictionJobs/1"));
+
+        let job = batches.get("1").await.unwrap();
+        assert!(job
+            .name
+            .as_deref()
+            .unwrap()
+            .contains("batchPredictionJobs/1"));
+
+        batches.delete("1").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_batches_vertex_api_flow_list_and_all() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/batchPredictionJobs",
+            ))
+            .and(query_param("pageSize", "2"))
+            .and(query_param_is_missing("pageToken"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "batchPredictionJobs": [{
+                    "name": "projects/proj/locations/loc/batchPredictionJobs/1"
+                }],
+                "nextPageToken": "next"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/batchPredictionJobs",
+            ))
+            .and(query_param("pageSize", "2"))
+            .and(query_param("pageToken", "next"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "batchPredictionJobs": [{
+                    "name": "projects/proj/locations/loc/batchPredictionJobs/2"
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = test_client_inner_with_base(Backend::VertexAi, &server.uri(), "v1beta1");
+        let batches = Batches::new(Arc::new(inner));
+
+        let list = batches
+            .list_with_config(ListBatchJobsConfig {
+                page_size: Some(2),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(list.batch_jobs.unwrap().len(), 1);
+
+        let all = batches
+            .all_with_config(ListBatchJobsConfig {
+                page_size: Some(2),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
     }
 }

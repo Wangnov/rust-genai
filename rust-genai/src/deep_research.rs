@@ -20,11 +20,15 @@ pub struct DeepResearch {
 }
 
 impl DeepResearch {
-    pub(crate) fn new(inner: Arc<ClientInner>) -> Self {
+    pub(crate) const fn new(inner: Arc<ClientInner>) -> Self {
         Self { inner }
     }
 
     /// 启动 Deep Research（默认配置）。
+    ///
+    /// # Errors
+    ///
+    /// 当创建交互请求失败或服务端返回错误时返回错误。
     pub async fn start(
         &self,
         model: impl Into<String>,
@@ -36,6 +40,10 @@ impl DeepResearch {
     }
 
     /// 启动 Deep Research（自定义配置）。
+    ///
+    /// # Errors
+    ///
+    /// 当创建交互请求失败或服务端返回错误时返回错误。
     pub async fn start_with_config(
         &self,
         mut config: CreateInteractionConfig,
@@ -45,6 +53,10 @@ impl DeepResearch {
     }
 
     /// 流式启动 Deep Research（自定义配置）。
+    ///
+    /// # Errors
+    ///
+    /// 当创建流式交互请求失败或服务端返回错误时返回错误。
     pub async fn stream_with_config(
         &self,
         mut config: CreateInteractionConfig,
@@ -71,5 +83,41 @@ fn apply_deep_research_defaults(config: &mut CreateInteractionConfig) {
             google_search: Some(GoogleSearch::default()),
             ..Default::default()
         }]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_genai_types::interactions::InteractionThinkingSummaries;
+
+    #[test]
+    fn apply_defaults_sets_missing_fields() {
+        let mut config = CreateInteractionConfig::new("model", InteractionInput::Text("hi".into()));
+        apply_deep_research_defaults(&mut config);
+        assert_eq!(config.background, Some(true));
+        assert_eq!(config.store, Some(true));
+        assert_eq!(
+            config.thinking_summaries,
+            Some(InteractionThinkingSummaries::Auto)
+        );
+        assert!(config.tools.is_some());
+    }
+
+    #[test]
+    fn apply_defaults_respects_existing_fields() {
+        let mut config = CreateInteractionConfig::new("model", InteractionInput::Text("hi".into()));
+        config.background = Some(false);
+        config.store = Some(false);
+        config.thinking_summaries = Some(InteractionThinkingSummaries::NoneValue);
+        config.tools = Some(Vec::new());
+        apply_deep_research_defaults(&mut config);
+        assert_eq!(config.background, Some(false));
+        assert_eq!(config.store, Some(false));
+        assert_eq!(
+            config.thinking_summaries,
+            Some(InteractionThinkingSummaries::NoneValue)
+        );
+        assert!(config.tools.as_ref().unwrap().is_empty());
     }
 }

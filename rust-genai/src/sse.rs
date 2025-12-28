@@ -31,6 +31,7 @@ pub struct SseDecoder {
 
 impl SseDecoder {
     /// 创建新的 SSE 解码器。
+    #[must_use]
     pub fn new() -> Self {
         Self {
             buffer: BytesMut::with_capacity(8192),
@@ -49,7 +50,7 @@ impl SseDecoder {
             let event_bytes = self.buffer.split_to(pos);
             self.buffer.advance(len);
 
-            match self.parse_lines(&event_bytes) {
+            match Self::parse_lines(&event_bytes) {
                 Ok(Some(event)) => events.push(Ok(event)),
                 Ok(None) => {}
                 Err(err) => events.push(Err(err)),
@@ -60,22 +61,17 @@ impl SseDecoder {
     }
 
     fn find_delimiter(&self, buf: &[u8]) -> Option<(usize, usize)> {
-        let mut best: Option<(usize, usize)> = None;
-
-        if let Some(pos) = self.finder_crlf.find(buf) {
-            best = Some((pos, 4));
-        }
-        if let Some(pos) = self.finder_lf.find(buf) {
-            best = pick_min(best, pos, 2);
-        }
-        if let Some(pos) = self.finder_cr.find(buf) {
-            best = pick_min(best, pos, 2);
-        }
-
-        best
+        let best = self.finder_crlf.find(buf).map(|pos| (pos, 4));
+        let best = self
+            .finder_lf
+            .find(buf)
+            .map_or(best, |pos| Some(pick_min(best, pos, 2)));
+        self.finder_cr
+            .find(buf)
+            .map_or(best, |pos| Some(pick_min(best, pos, 2)))
     }
 
-    fn parse_lines(&self, data: &[u8]) -> Result<Option<ServerSentEvent>> {
+    fn parse_lines(data: &[u8]) -> Result<Option<ServerSentEvent>> {
         if data.is_empty() {
             return Ok(None);
         }
@@ -142,14 +138,14 @@ impl Default for SseDecoder {
     }
 }
 
-fn pick_min(best: Option<(usize, usize)>, pos: usize, len: usize) -> Option<(usize, usize)> {
+const fn pick_min(best: Option<(usize, usize)>, pos: usize, len: usize) -> (usize, usize) {
     match best {
-        None => Some((pos, len)),
+        None => (pos, len),
         Some((best_pos, best_len)) => {
             if pos < best_pos {
-                Some((pos, len))
+                (pos, len)
             } else {
-                Some((best_pos, best_len))
+                (best_pos, best_len)
             }
         }
     }
@@ -168,6 +164,7 @@ impl<T> Unpin for SseJsonStream<T> {}
 
 impl<T> SseJsonStream<T> {
     /// 从 HTTP 响应创建 SSE 流。
+    #[must_use]
     pub fn new(response: reqwest::Response) -> Self {
         Self {
             stream: Box::pin(response.bytes_stream()),
@@ -230,6 +227,7 @@ pub fn parse_sse_stream(
 }
 
 /// 泛型 SSE JSON 流解析器。
+#[must_use]
 pub fn parse_sse_stream_with<T>(response: reqwest::Response) -> SseJsonStream<T>
 where
     T: DeserializeOwned,
@@ -240,6 +238,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
+    use serde_json::Value;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_sse_decoder_basic() {
@@ -261,6 +263,31 @@ mod tests {
     }
 
     #[test]
+    fn test_sse_decoder_default_works() {
+        let mut decoder = SseDecoder::default();
+        let chunk = b"data: {\"text\":\"Hello\"}\n\n";
+        let events = decoder.decode(chunk);
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn test_sse_decoder_line_without_colon_and_empty_lines() {
+        let mut decoder = SseDecoder::new();
+        let chunk = b"data\n\n\n";
+        let events = decoder.decode(chunk);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].as_ref().unwrap().data, "");
+    }
+
+    #[test]
+    fn test_sse_decoder_only_comments_returns_empty() {
+        let mut decoder = SseDecoder::new();
+        let chunk = b":comment\n\n";
+        let events = decoder.decode(chunk);
+        assert!(events.is_empty());
+    }
+
+    #[test]
     fn test_sse_done_signal() {
         let mut decoder = SseDecoder::new();
         let chunk = b"data: [DONE]\n\n";
@@ -276,5 +303,105 @@ mod tests {
         let events = decoder.decode(chunk);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].as_ref().unwrap().data, r#"{"text":"Hello"}"#);
+    }
+
+    #[test]
+    fn test_sse_decoder_event_and_id() {
+        let mut decoder = SseDecoder::new();
+        let chunk = b":comment\nid: 7\nevent: update\ndata: line1\ndata: line2\n\n";
+        let events = decoder.decode(chunk);
+        assert_eq!(events.len(), 1);
+        let event = events[0].as_ref().unwrap();
+        assert_eq!(event.event.as_deref(), Some("update"));
+        assert_eq!(event.id.as_deref(), Some("7"));
+        assert_eq!(event.data, "line1\nline2");
+    }
+
+    #[test]
+    fn test_sse_decoder_invalid_utf8_and_empty() {
+        let mut decoder = SseDecoder::new();
+        let chunk = b"data: \xFF\xFF\n\n";
+        let events = decoder.decode(chunk);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].as_ref().is_err());
+
+        let events = decoder.decode(b"\n\n");
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sse_json_stream_invalid_utf8() {
+        let server = MockServer::start().await;
+        let body = vec![0xFF, 0xFF, b'\n', b'\n'];
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_bytes(body),
+            )
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .get(server.uri())
+            .send()
+            .await
+            .unwrap();
+        let mut stream = parse_sse_stream_with::<Value>(response);
+        let err = stream.next().await.unwrap().unwrap_err();
+        assert!(matches!(err, Error::Parse { .. }));
+    }
+
+    #[test]
+    fn test_pick_min_prefers_smaller_position() {
+        assert_eq!(pick_min(Some((5, 2)), 2, 4), (2, 4));
+        assert_eq!(pick_min(Some((2, 2)), 5, 4), (2, 2));
+    }
+
+    #[tokio::test]
+    async fn test_sse_json_stream_parses_and_done() {
+        let server = MockServer::start().await;
+        let body = "data: {\"value\":1}\n\ndata: [DONE]\n\n";
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .get(server.uri())
+            .send()
+            .await
+            .unwrap();
+        let mut stream = parse_sse_stream_with::<Value>(response);
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first["value"], 1);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sse_json_stream_invalid_json() {
+        let server = MockServer::start().await;
+        let body = "data: {bad json}\n\n";
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .get(server.uri())
+            .send()
+            .await
+            .unwrap();
+        let mut stream = parse_sse_stream_with::<Value>(response);
+        let err = stream.next().await.unwrap().unwrap_err();
+        assert!(matches!(err, Error::Serialization { .. }));
     }
 }

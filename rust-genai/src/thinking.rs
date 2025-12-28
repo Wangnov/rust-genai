@@ -19,6 +19,10 @@ impl ThoughtSignatureValidator {
     }
 
     /// 验证对话历史中的 thought signatures。
+    ///
+    /// # Errors
+    ///
+    /// 当 `thought_signature` 缺失或不符合规则时返回错误。
     pub fn validate(&self, contents: &[Content]) -> Result<()> {
         if !is_gemini_3(&self.model) {
             return Ok(());
@@ -62,6 +66,10 @@ impl ThoughtSignatureValidator {
 }
 
 /// Gemini 3 温度检查。
+///
+/// # Errors
+///
+/// 当前不会返回错误。
 pub fn validate_temperature(model: &str, config: &GenerateContentConfig) -> Result<()> {
     if !is_gemini_3(model) {
         return Ok(());
@@ -74,8 +82,7 @@ pub fn validate_temperature(model: &str, config: &GenerateContentConfig) -> Resu
     {
         if temperature < 1.0 {
             eprintln!(
-                "Warning: Gemini 3 temperature {} < 1.0 may cause looping; use 1.0",
-                temperature
+                "Warning: Gemini 3 temperature {temperature} < 1.0 may cause looping; use 1.0"
             );
         }
     }
@@ -87,8 +94,7 @@ fn is_gemini_3(model: &str) -> bool {
     model
         .rsplit('/')
         .next()
-        .map(|name| name.starts_with("gemini-3"))
-        .unwrap_or(false)
+        .is_some_and(|name| name.starts_with("gemini-3"))
 }
 
 fn find_current_turn_start(contents: &[Content]) -> usize {
@@ -142,5 +148,71 @@ mod tests {
             ..Default::default()
         };
         validate_temperature("gemini-3-flash-preview", &config).unwrap();
+    }
+
+    #[test]
+    fn test_thought_signature_validation_non_gemini3_noop() {
+        let validator = ThoughtSignatureValidator::new("gemini-2.0-flash");
+        let contents = vec![Content::from_parts(
+            vec![Part::function_call(FunctionCall {
+                id: None,
+                name: Some("noop".into()),
+                args: None,
+                partial_args: None,
+                will_continue: None,
+            })],
+            Role::Model,
+        )];
+        assert!(validator.validate(&contents).is_ok());
+    }
+
+    #[test]
+    fn test_thought_signature_validation_allows_single_signature() {
+        let validator = ThoughtSignatureValidator::new("gemini-3-pro-preview");
+        let contents = vec![
+            Content::user("Plan"),
+            Content::from_parts(
+                vec![Part::function_call(FunctionCall {
+                    id: None,
+                    name: Some("plan".into()),
+                    args: None,
+                    partial_args: None,
+                    will_continue: None,
+                })
+                .with_thought_signature(vec![1, 2, 3])],
+                Role::Model,
+            ),
+        ];
+        assert!(validator.validate(&contents).is_ok());
+    }
+
+    #[test]
+    fn test_thought_signature_validation_rejects_multiple_signatures() {
+        let validator = ThoughtSignatureValidator::new("gemini-3-pro-preview");
+        let contents = vec![
+            Content::user("Plan"),
+            Content::from_parts(
+                vec![
+                    Part::function_call(FunctionCall {
+                        id: None,
+                        name: Some("step1".into()),
+                        args: None,
+                        partial_args: None,
+                        will_continue: None,
+                    })
+                    .with_thought_signature(vec![1]),
+                    Part::function_call(FunctionCall {
+                        id: None,
+                        name: Some("step2".into()),
+                        args: None,
+                        partial_args: None,
+                        will_continue: None,
+                    })
+                    .with_thought_signature(vec![2]),
+                ],
+                Role::Model,
+            ),
+        ];
+        assert!(validator.validate(&contents).is_err());
     }
 }

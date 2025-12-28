@@ -233,6 +233,254 @@ impl TextAccumulator {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_genai_types::config::GenerationConfig;
+    use rust_genai_types::content::{FunctionCall, FunctionResponse, Part, Role};
+    use rust_genai_types::models::CountTokensConfig;
+    use rust_genai_types::tool::{FunctionDeclaration, Schema, Tool};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn simple_token_estimator_counts_various_parts() {
+        let call = FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: Some(json!({"q": "rust"})),
+            partial_args: None,
+            will_continue: None,
+        };
+        let response = FunctionResponse {
+            will_continue: None,
+            scheduling: None,
+            parts: None,
+            id: Some("resp-1".into()),
+            name: Some("lookup".into()),
+            response: Some(json!({"ok": true})),
+        };
+        let content = Content::from_parts(
+            vec![
+                Part::text("hello"),
+                Part::inline_data(vec![0, 1, 2, 3], "image/png"),
+                Part::file_data("files/abc", "application/pdf"),
+                Part::function_call(call),
+                Part::function_response(response),
+                Part::executable_code("print('hi')", rust_genai_types::enums::Language::Python),
+                Part::code_execution_result(rust_genai_types::enums::Outcome::OutcomeOk, "ok"),
+            ],
+            Role::User,
+        );
+
+        let estimator = SimpleTokenEstimator;
+        let tokens = estimator.estimate_tokens(&[content]);
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn build_estimation_contents_includes_tools_and_config() {
+        let declaration = FunctionDeclaration {
+            name: "search".to_string(),
+            description: Some("desc".to_string()),
+            parameters: Some(
+                Schema::object()
+                    .property("q", Schema::string())
+                    .required("q")
+                    .build(),
+            ),
+            parameters_json_schema: Some(
+                json!({"type": "object", "properties": {"q": {"type": "string"}}}),
+            ),
+            response: Some(Schema::string()),
+            response_json_schema: Some(json!({"type": "string"})),
+            behavior: None,
+        };
+        let tool = Tool {
+            function_declarations: Some(vec![declaration]),
+            ..Default::default()
+        };
+        let generation_config = GenerationConfig {
+            response_schema: Some(Schema::object().property("r", Schema::string()).build()),
+            response_json_schema: Some(
+                json!({"type": "object", "properties": {"r": {"type": "string"}}}),
+            ),
+            ..Default::default()
+        };
+
+        let config = CountTokensConfig {
+            system_instruction: Some(Content::text("sys")),
+            tools: Some(vec![tool]),
+            generation_config: Some(generation_config),
+        };
+
+        let contents = vec![Content::text("user")];
+        let combined = build_estimation_contents(&contents, &config);
+        // 原始内容 + 系统指令 + 追加文本内容
+        assert!(combined.len() >= 2);
+    }
+
+    #[test]
+    fn text_accumulator_collects_schema_and_json_fields() {
+        let mut properties = HashMap::new();
+        properties.insert("prop".to_string(), Box::new(Schema::string()));
+        let schema = Schema {
+            title: Some("Title".into()),
+            format: Some("Fmt".into()),
+            description: Some("Desc".into()),
+            enum_values: Some(vec!["A".into(), "B".into()]),
+            required: Some(vec!["req".into()]),
+            properties: Some(properties),
+            items: Some(Box::new(Schema::number())),
+            any_of: Some(vec![Schema::boolean()]),
+            example: Some(json!({"ex_key": "ex_val"})),
+            default: Some(json!(["d"])),
+            ..Default::default()
+        };
+
+        let mut accumulator = TextAccumulator::default();
+        accumulator.add_schema(&schema);
+        accumulator.add_json(&json!(["a", {"k": "v"}, 1]));
+        let texts = accumulator.texts;
+
+        assert!(texts.contains(&"Title".to_string()));
+        assert!(texts.contains(&"Fmt".to_string()));
+        assert!(texts.contains(&"Desc".to_string()));
+        assert!(texts.contains(&"A".to_string()));
+        assert!(texts.contains(&"B".to_string()));
+        assert!(texts.contains(&"req".to_string()));
+        assert!(texts.contains(&"prop".to_string()));
+        assert!(texts.contains(&"ex_key".to_string()));
+        assert!(texts.contains(&"ex_val".to_string()));
+        assert!(texts.contains(&"k".to_string()));
+        assert!(texts.contains(&"v".to_string()));
+        assert!(texts.contains(&"a".to_string()));
+    }
+
+    #[test]
+    fn text_accumulator_collects_function_parts() {
+        let call = FunctionCall {
+            id: None,
+            name: None,
+            args: Some(json!({"q": "rust"})),
+            partial_args: None,
+            will_continue: None,
+        };
+        let response = FunctionResponse {
+            will_continue: None,
+            scheduling: None,
+            parts: None,
+            id: None,
+            name: None,
+            response: Some(json!({"answer": "ok"})),
+        };
+        let content = Content::from_parts(
+            vec![Part::function_call(call), Part::function_response(response)],
+            Role::User,
+        );
+
+        let mut accumulator = TextAccumulator::default();
+        accumulator.add_function_texts_from_content(&content);
+        let texts = accumulator.texts;
+
+        assert!(texts.contains(&"q".to_string()));
+        assert!(texts.contains(&"rust".to_string()));
+        assert!(texts.contains(&"answer".to_string()));
+        assert!(texts.contains(&"ok".to_string()));
+    }
+
+    #[test]
+    fn text_accumulator_collects_named_parts_and_declarations() {
+        let call = FunctionCall {
+            id: None,
+            name: Some("lookup".into()),
+            args: Some(json!({"k": "v"})),
+            partial_args: None,
+            will_continue: None,
+        };
+        let response = FunctionResponse {
+            will_continue: None,
+            scheduling: None,
+            parts: None,
+            id: None,
+            name: Some("lookup_result".into()),
+            response: Some(json!({"out": "done"})),
+        };
+        let content = Content::from_parts(
+            vec![Part::function_call(call), Part::function_response(response)],
+            Role::User,
+        );
+
+        let declaration = FunctionDeclaration {
+            name: "search".to_string(),
+            description: Some("desc".to_string()),
+            parameters: Some(Schema::object().property("q", Schema::string()).build()),
+            parameters_json_schema: Some(
+                json!({"type": "object", "properties": {"q": {"type": "string"}}}),
+            ),
+            response: Some(Schema::string()),
+            response_json_schema: Some(json!({"type": "string"})),
+            behavior: None,
+        };
+
+        let generation_config = GenerationConfig {
+            response_schema: Some(Schema::string()),
+            response_json_schema: Some(json!({"type": "string"})),
+            ..Default::default()
+        };
+
+        let mut accumulator = TextAccumulator::default();
+        accumulator.add_function_texts_from_content(&content);
+        accumulator.add_function_declaration(&declaration);
+        accumulator.add_generation_config(&generation_config);
+        let texts = accumulator.texts;
+
+        assert!(texts.contains(&"lookup".to_string()));
+        assert!(texts.contains(&"lookup_result".to_string()));
+        assert!(texts.contains(&"k".to_string()));
+        assert!(texts.contains(&"v".to_string()));
+        assert!(texts.contains(&"out".to_string()));
+        assert!(texts.contains(&"done".to_string()));
+        assert!(texts.contains(&"search".to_string()));
+        assert!(texts.contains(&"desc".to_string()));
+        assert!(texts.contains(&"q".to_string()));
+    }
+
+    #[test]
+    fn simple_token_estimator_counts_function_names() {
+        let call = FunctionCall {
+            id: None,
+            name: Some("ping".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        };
+        let response = FunctionResponse {
+            will_continue: None,
+            scheduling: None,
+            parts: None,
+            id: None,
+            name: Some("pong".into()),
+            response: None,
+        };
+        let content = Content::from_parts(
+            vec![Part::function_call(call), Part::function_response(response)],
+            Role::User,
+        );
+
+        let estimator = SimpleTokenEstimator;
+        let tokens = estimator.estimate_tokens(&[content]);
+        assert_eq!(tokens, 2);
+    }
+
+    #[test]
+    fn simple_token_estimator_empty_is_zero() {
+        let estimator = SimpleTokenEstimator;
+        let tokens = estimator.estimate_tokens(&[]);
+        assert_eq!(tokens, 0);
+    }
+}
+
 #[cfg(feature = "kitoken")]
 pub mod kitoken {
     use super::TokenEstimator;
@@ -341,7 +589,7 @@ pub mod kitoken {
         },
     }
 
-    /// Kitoken-based estimator (SentencePiece compatible).
+    /// Kitoken-based estimator (`SentencePiece` compatible).
     #[derive(Debug, Clone)]
     pub struct KitokenEstimator {
         encoder: Arc<Kitoken>,
@@ -357,7 +605,10 @@ pub mod kitoken {
             }
         }
 
-        /// Load a SentencePiece model from file.
+        /// Load a `SentencePiece` model from file.
+        ///
+        /// # Errors
+        /// 当模型加载失败或文件无效时返回错误。
         pub fn from_sentencepiece_file(
             path: impl AsRef<Path>,
         ) -> Result<Self, LocalTokenizerError> {
@@ -366,6 +617,9 @@ pub mod kitoken {
         }
 
         /// Load a known Gemini model tokenizer by model name (downloads & caches).
+        ///
+        /// # Errors
+        /// 当模型名未知、下载失败或解析失败时返回错误。
         pub async fn from_model_name(model_name: &str) -> Result<Self, LocalTokenizerError> {
             let tokenizer_name = get_tokenizer_name(model_name)?;
             let config = tokenizer_config(tokenizer_name).ok_or_else(|| {
@@ -379,6 +633,9 @@ pub mod kitoken {
         }
 
         /// Compute token ids and token bytes for text contents.
+        ///
+        /// # Errors
+        /// 当内容不受支持或编码失败时返回错误。
         pub fn compute_tokens(
             &self,
             contents: &[Content],
@@ -392,7 +649,7 @@ pub mod kitoken {
                         Role::Model => "model",
                         Role::Function => "function",
                     })
-                    .map(|value| value.to_string());
+                    .map(ToString::to_string);
 
                 for part in &content.parts {
                     let texts = collect_part_texts(part)?;
@@ -412,7 +669,7 @@ pub mod kitoken {
                                 .get(&id)
                                 .ok_or(LocalTokenizerError::MissingToken { id })?;
                             tokens.push(STANDARD.encode(bytes));
-                            token_ids.push(id as i64);
+                            token_ids.push(i64::from(id));
                         }
                     }
                     if token_ids.is_empty() {
@@ -461,10 +718,10 @@ pub mod kitoken {
     }
 
     fn normalize_token_bytes(bytes: &[u8]) -> Vec<u8> {
-        match std::str::from_utf8(bytes) {
-            Ok(text) => text.replace('▁', " ").into_bytes(),
-            Err(_) => bytes.to_vec(),
-        }
+        std::str::from_utf8(bytes).map_or_else(
+            |_| bytes.to_vec(),
+            |text| text.replace('▁', " ").into_bytes(),
+        )
     }
 
     fn collect_part_texts(part: &Part) -> Result<Vec<String>, LocalTokenizerError> {
@@ -659,8 +916,195 @@ pub mod kitoken {
         let digest = Sha256::digest(data);
         let mut output = String::with_capacity(digest.len() * 2);
         for byte in digest {
-            let _ = write!(output, "{:02x}", byte);
+            let _ = write!(output, "{byte:02x}");
         }
         output
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use rust_genai_types::content::{Content, FunctionCall, FunctionResponse, Part, Role};
+        use rust_genai_types::enums::{Language, Outcome};
+        use serde_json::json;
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn build_test_encoder() -> Kitoken {
+            let vocab = vec![
+                kitoken::Token {
+                    id: 0,
+                    bytes: b"hi".to_vec(),
+                },
+                kitoken::Token {
+                    id: 1,
+                    bytes: b"lookup".to_vec(),
+                },
+                kitoken::Token {
+                    id: 2,
+                    bytes: b"q".to_vec(),
+                },
+                kitoken::Token {
+                    id: 3,
+                    bytes: b"rust".to_vec(),
+                },
+                kitoken::Token {
+                    id: 4,
+                    bytes: b"resp".to_vec(),
+                },
+                kitoken::Token {
+                    id: 5,
+                    bytes: b"ok".to_vec(),
+                },
+                kitoken::Token {
+                    id: 6,
+                    bytes: b"code".to_vec(),
+                },
+                kitoken::Token {
+                    id: 7,
+                    bytes: b"out".to_vec(),
+                },
+                kitoken::Token {
+                    id: 8,
+                    bytes: "\u{2581}".as_bytes().to_vec(),
+                },
+            ];
+            let specials = vec![kitoken::SpecialToken {
+                id: 99,
+                bytes: b"[UNK]".to_vec(),
+                kind: kitoken::SpecialTokenKind::Unknown,
+                ident: None,
+                score: 0.0,
+                extract: false,
+            }];
+            let model = kitoken::Model::WordPiece {
+                vocab,
+                max_word_chars: 0,
+            };
+            let config = kitoken::Configuration::default();
+            let meta = kitoken::Metadata::default();
+            Kitoken::new(model, specials, config, meta).unwrap()
+        }
+
+        fn unique_cache_key(tag: &str) -> String {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            format!("test://{tag}-{nanos}")
+        }
+
+        #[test]
+        fn get_tokenizer_name_known_and_unknown() {
+            assert_eq!(get_tokenizer_name("gemini-1.5-pro").unwrap(), "gemma2");
+            let err = get_tokenizer_name("unknown-model").unwrap_err();
+            match err {
+                LocalTokenizerError::UnsupportedModel { supported, .. } => {
+                    assert!(supported.contains("gemini-1.0-pro"));
+                }
+                _ => panic!("expected UnsupportedModel error"),
+            }
+        }
+
+        #[test]
+        fn normalize_token_bytes_replaces_separator_and_handles_invalid_utf8() {
+            let replaced = normalize_token_bytes("\u{2581}hi".as_bytes());
+            assert_eq!(replaced, b" hi".to_vec());
+
+            let invalid = normalize_token_bytes(&[0xff, 0xfe]);
+            assert_eq!(invalid, vec![0xff, 0xfe]);
+        }
+
+        #[test]
+        fn cache_roundtrip_and_mismatch_evicts() {
+            let key = unique_cache_key("cache-roundtrip");
+            let path = cache_path_for(&key);
+            let _ = fs::remove_file(&path);
+
+            let bytes = b"cached".to_vec();
+            write_cache(&path, &bytes).unwrap();
+            let hash = sha256_hex(&bytes);
+            let cached = read_cache(&path, &hash).unwrap().unwrap();
+            assert_eq!(cached, bytes);
+
+            let wrong_hash = sha256_hex(b"other");
+            let result = read_cache(&path, &wrong_hash).unwrap();
+            assert!(result.is_none());
+            assert!(!path.exists());
+        }
+
+        #[tokio::test]
+        async fn load_model_bytes_uses_cache() {
+            let key = unique_cache_key("load-cache");
+            let path = cache_path_for(&key);
+            let _ = fs::remove_file(&path);
+
+            let bytes = b"model-bytes".to_vec();
+            write_cache(&path, &bytes).unwrap();
+            let hash = sha256_hex(&bytes);
+
+            let loaded = load_model_bytes(&key, &hash).await.unwrap();
+            assert_eq!(loaded, bytes);
+        }
+
+        #[test]
+        fn collect_part_texts_rejects_binary_parts() {
+            let inline = Part::inline_data(vec![1, 2, 3], "image/png");
+            let err = collect_part_texts(&inline).unwrap_err();
+            assert!(matches!(
+                err,
+                LocalTokenizerError::UnsupportedContent {
+                    kind: "inline_data"
+                }
+            ));
+
+            let file = Part::file_data("files/1", "application/pdf");
+            let err = collect_part_texts(&file).unwrap_err();
+            assert!(matches!(
+                err,
+                LocalTokenizerError::UnsupportedContent { kind: "file_data" }
+            ));
+        }
+
+        #[test]
+        fn kitoken_estimator_compute_tokens_and_map_normalization() {
+            let encoder = build_test_encoder();
+            let estimator = KitokenEstimator::from_encoder(encoder);
+
+            let call = FunctionCall {
+                id: None,
+                name: Some("lookup".into()),
+                args: Some(json!({"q": "rust"})),
+                partial_args: None,
+                will_continue: None,
+            };
+            let response = FunctionResponse {
+                will_continue: None,
+                scheduling: None,
+                parts: None,
+                id: None,
+                name: Some("resp".into()),
+                response: Some(json!({"ok": "ok"})),
+            };
+            let content = Content::from_parts(
+                vec![
+                    Part::text("hi"),
+                    Part::function_call(call),
+                    Part::function_response(response),
+                    Part::executable_code("code", Language::Python),
+                    Part::code_execution_result(Outcome::OutcomeOk, "out"),
+                ],
+                Role::User,
+            );
+
+            let result = estimator.compute_tokens(&[content]).unwrap();
+            assert!(!result.tokens_info.as_ref().unwrap().is_empty());
+
+            let estimated = estimator.estimate_tokens(&[Content::text("hi")]);
+            assert!(estimated > 0);
+
+            let normalized = estimator.token_bytes.get(&8).unwrap();
+            assert_eq!(normalized.as_slice(), b" ");
+        }
     }
 }

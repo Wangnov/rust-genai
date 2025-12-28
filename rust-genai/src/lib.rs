@@ -25,6 +25,10 @@ pub mod thinking;
 pub mod tokenizer;
 pub mod tokens;
 pub mod tunings;
+mod upload;
+
+#[cfg(test)]
+mod test_support;
 
 pub use rust_genai_types as types;
 
