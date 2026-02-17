@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::documents::CustomMetadata;
 use crate::http::{HttpOptions, HttpResponse};
+use crate::operations::OperationError;
 
 /// Optional parameters for creating a file search store.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -176,4 +178,36 @@ pub struct UploadToFileSearchStoreResponse {
     pub parent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document_name: Option<String>,
+}
+
+/// Long-running operation for importing a file to a `FileSearchStore`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportFileOperation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub done: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<OperationError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<ImportFileResponse>,
+}
+
+/// Long-running operation for uploading a file to a `FileSearchStore`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadToFileSearchStoreOperation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub done: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<OperationError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<UploadToFileSearchStoreResponse>,
 }
