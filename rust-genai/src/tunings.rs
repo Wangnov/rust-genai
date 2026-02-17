@@ -6,8 +6,9 @@ use std::time::Duration;
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::enums::{JobState, TuningMethod};
 use rust_genai_types::tunings::{
-    CancelTuningJobConfig, CreateTuningJobConfig, GetTuningJobConfig, ListTuningJobsConfig,
-    ListTuningJobsResponse, PreTunedModel, TunedModel, TuningDataset, TuningJob,
+    CancelTuningJobConfig, CancelTuningJobResponse, CreateTuningJobConfig, GetTuningJobConfig,
+    ListTuningJobsConfig, ListTuningJobsResponse, PreTunedModel, TunedModel, TuningDataset,
+    TuningJob,
 };
 use serde_json::{json, Map, Value};
 
@@ -216,7 +217,7 @@ impl Tunings {
     ///
     /// # Errors
     /// 当请求失败或响应解析失败时返回错误。
-    pub async fn cancel(&self, name: impl AsRef<str>) -> Result<()> {
+    pub async fn cancel(&self, name: impl AsRef<str>) -> Result<CancelTuningJobResponse> {
         self.cancel_with_config(name, CancelTuningJobConfig::default())
             .await
     }
@@ -229,7 +230,7 @@ impl Tunings {
         &self,
         name: impl AsRef<str>,
         mut config: CancelTuningJobConfig,
-    ) -> Result<()> {
+    ) -> Result<CancelTuningJobResponse> {
         let http_options = config.http_options.take();
         let name = normalize_tuning_job_name(&self.inner, name.as_ref())?;
         let url = build_tuning_job_cancel_url(&self.inner, &name, http_options.as_ref());
@@ -246,7 +247,15 @@ impl Tunings {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(())
+        let headers = response.headers().clone();
+        let text = response.text().await.unwrap_or_default();
+        let mut result = if text.trim().is_empty() {
+            CancelTuningJobResponse::default()
+        } else {
+            serde_json::from_str::<CancelTuningJobResponse>(&text)?
+        };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 }
 

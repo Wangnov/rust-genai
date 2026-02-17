@@ -150,6 +150,15 @@ pub struct CancelTuningJobConfig {
     pub http_options: Option<HttpOptions>,
 }
 
+/// Empty response for tunings.cancel method.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelTuningJobResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
+}
+
 /// `TunedModel` checkpoint.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

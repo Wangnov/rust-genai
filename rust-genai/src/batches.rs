@@ -6,7 +6,7 @@ use std::time::Duration;
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::batches::{
     BatchJob, BatchJobDestination, BatchJobSource, CreateBatchJobConfig, DeleteBatchJobConfig,
-    GetBatchJobConfig, InlinedRequest, ListBatchJobsConfig, ListBatchJobsResponse,
+    DeleteResourceJob, GetBatchJobConfig, InlinedRequest, ListBatchJobsConfig, ListBatchJobsResponse,
 };
 use rust_genai_types::enums::JobState;
 use serde_json::{json, Map, Value};
@@ -103,7 +103,7 @@ impl Batches {
     ///
     /// # Errors
     /// 当请求失败或服务端返回错误时返回错误。
-    pub async fn delete(&self, name: impl AsRef<str>) -> Result<()> {
+    pub async fn delete(&self, name: impl AsRef<str>) -> Result<DeleteResourceJob> {
         self.delete_with_config(name, DeleteBatchJobConfig::default())
             .await
     }
@@ -116,7 +116,7 @@ impl Batches {
         &self,
         name: impl AsRef<str>,
         mut config: DeleteBatchJobConfig,
-    ) -> Result<()> {
+    ) -> Result<DeleteResourceJob> {
         let http_options = config.http_options.take();
         let name = normalize_batch_job_name(&self.inner, name.as_ref())?;
         let url = build_batch_job_url(&self.inner, &name, http_options.as_ref());
@@ -133,7 +133,15 @@ impl Batches {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(())
+        let headers = response.headers().clone();
+        let text = response.text().await.unwrap_or_default();
+        let mut result = if text.trim().is_empty() {
+            DeleteResourceJob::default()
+        } else {
+            serde_json::from_str::<DeleteResourceJob>(&text)?
+        };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出批处理任务。

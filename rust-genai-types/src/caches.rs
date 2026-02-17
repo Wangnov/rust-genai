@@ -70,6 +70,15 @@ pub struct DeleteCachedContentConfig {
     pub http_options: Option<HttpOptions>,
 }
 
+/// 删除缓存响应。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteCachedContentResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
+}
+
 /// 列出缓存配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

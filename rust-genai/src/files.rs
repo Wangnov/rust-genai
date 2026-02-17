@@ -15,8 +15,8 @@ use crate::upload;
 use crate::upload::CHUNK_SIZE;
 use rust_genai_types::enums::FileState;
 use rust_genai_types::files::{
-    DownloadFileConfig, File, ListFilesConfig, ListFilesResponse, RegisterFilesConfig,
-    RegisterFilesResponse, UploadFileConfig,
+    DeleteFileResponse, DownloadFileConfig, File, ListFilesConfig, ListFilesResponse,
+    RegisterFilesConfig, RegisterFilesResponse, UploadFileConfig,
 };
 use serde_json::Value;
 
@@ -229,7 +229,7 @@ impl Files {
     ///
     /// # Errors
     /// 当请求失败或响应解析失败时返回错误。
-    pub async fn delete(&self, name_or_uri: impl AsRef<str>) -> Result<()> {
+    pub async fn delete(&self, name_or_uri: impl AsRef<str>) -> Result<DeleteFileResponse> {
         ensure_gemini_backend(&self.inner)?;
 
         let file_name = normalize_file_name(name_or_uri.as_ref())?;
@@ -242,7 +242,15 @@ impl Files {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(())
+        let headers = response.headers().clone();
+        let text = response.text().await.unwrap_or_default();
+        let mut result = if text.trim().is_empty() {
+            DeleteFileResponse::default()
+        } else {
+            serde_json::from_str::<DeleteFileResponse>(&text)?
+        };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 注册 Google Cloud Storage 文件（使其可用于 Gemini Developer API）。

@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::caches::{
-    CachedContent, CreateCachedContentConfig, DeleteCachedContentConfig, GetCachedContentConfig,
-    ListCachedContentsConfig, ListCachedContentsResponse, UpdateCachedContentConfig,
+    CachedContent, CreateCachedContentConfig, DeleteCachedContentConfig, DeleteCachedContentResponse,
+    GetCachedContentConfig, ListCachedContentsConfig, ListCachedContentsResponse,
+    UpdateCachedContentConfig,
 };
 use serde_json::{json, Map, Value};
 
@@ -139,7 +140,7 @@ impl Caches {
     ///
     /// # Errors
     /// 当请求失败或服务端返回错误时返回错误。
-    pub async fn delete(&self, name: impl AsRef<str>) -> Result<()> {
+    pub async fn delete(&self, name: impl AsRef<str>) -> Result<DeleteCachedContentResponse> {
         self.delete_with_config(name, DeleteCachedContentConfig::default())
             .await
     }
@@ -152,7 +153,7 @@ impl Caches {
         &self,
         name: impl AsRef<str>,
         mut config: DeleteCachedContentConfig,
-    ) -> Result<()> {
+    ) -> Result<DeleteCachedContentResponse> {
         let http_options = config.http_options.take();
         let name = normalize_cached_content_name(&self.inner, name.as_ref())?;
         let url = build_cached_content_url(&self.inner, &name, http_options.as_ref());
@@ -169,7 +170,15 @@ impl Caches {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(())
+        let headers = response.headers().clone();
+        let text = response.text().await.unwrap_or_default();
+        let mut result = if text.trim().is_empty() {
+            DeleteCachedContentResponse::default()
+        } else {
+            serde_json::from_str::<DeleteCachedContentResponse>(&text)?
+        };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出缓存。

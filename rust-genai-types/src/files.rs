@@ -109,3 +109,12 @@ pub struct RegisterFilesResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<File>>,
 }
+
+/// Response for deleting a file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFileResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
+}
