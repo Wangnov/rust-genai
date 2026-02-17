@@ -147,7 +147,10 @@ impl Operations {
 fn normalize_operation_name(inner: &ClientInner, name: &str) -> Result<String> {
     match inner.config.backend {
         Backend::GeminiApi => {
-            if name.starts_with("operations/") || name.starts_with("models/") {
+            // Gemini API may return LRO names under different resources
+            // (e.g. `fileSearchStores/*/operations/*`, `tunedModels/*/operations/*`).
+            // If the caller passes a full resource name, use it as-is.
+            if name.contains('/') {
                 Ok(name.to_string())
             } else {
                 Ok(format!("operations/{name}"))
@@ -284,6 +287,10 @@ mod tests {
         assert_eq!(
             normalize_operation_name(&gemini, "models/abc").unwrap(),
             "models/abc"
+        );
+        assert_eq!(
+            normalize_operation_name(&gemini, "fileSearchStores/s/operations/o").unwrap(),
+            "fileSearchStores/s/operations/o"
         );
         assert_eq!(
             normalize_operation_name(&gemini, "op-1").unwrap(),
