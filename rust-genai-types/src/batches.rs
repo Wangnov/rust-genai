@@ -56,6 +56,9 @@ pub struct JobError {
 pub struct InlinedResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<GenerateContentResponse>,
+    /// Optional. The metadata to be associated with the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JobError>,
 }
