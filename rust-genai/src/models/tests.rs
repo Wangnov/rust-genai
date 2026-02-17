@@ -132,7 +132,15 @@ async fn mount_vertex_model_mocks(server: &MockServer) {
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "name": "operations/vertex-1",
-            "response": {"ok": true}
+            "response": {
+                "videos": [
+                    {
+                        "gcsUri": "gs://example/video.mp4",
+                        "mimeType": "video/mp4",
+                        "bytesBase64Encoded": "AQID"
+                    }
+                ]
+            }
         })))
         .mount(server)
         .await;
@@ -238,6 +246,14 @@ async fn assert_vertex_image_ops(models: &Models) {
         .await
         .unwrap();
     assert_eq!(op.name.as_deref(), Some("operations/vertex-1"));
+    assert_eq!(op.response.as_ref().unwrap().generated_videos.len(), 1);
+    let video = op.response.as_ref().unwrap().generated_videos[0]
+        .video
+        .as_ref()
+        .unwrap();
+    assert_eq!(video.uri.as_deref(), Some("gs://example/video.mp4"));
+    assert_eq!(video.mime_type.as_deref(), Some("video/mp4"));
+    assert_eq!(video.video_bytes.as_deref(), Some(&[1, 2, 3][..]));
 }
 
 #[tokio::test]

@@ -54,7 +54,7 @@ async fn main() -> rust_genai::Result<()> {
             ..Default::default()
         }
     } else {
-        let operation = client
+        let op = client
             .models()
             .generate_videos_with_prompt(
                 "veo-3.0-generate-001",
@@ -62,8 +62,11 @@ async fn main() -> rust_genai::Result<()> {
                 GenerateVideosConfig::default(),
             )
             .await?;
-        println!("operation: {:?}", operation.name);
-        operation
+        println!("operation: {:?}", op.name);
+        rust_genai::types::operations::Operation {
+            name: op.name,
+            ..Default::default()
+        }
     };
 
     let operation = client.operations().wait(operation).await?;

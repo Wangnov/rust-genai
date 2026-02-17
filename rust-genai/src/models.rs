@@ -13,9 +13,9 @@ use rust_genai_types::models::{
     CountTokensRequest, CountTokensResponse, DeleteModelConfig, DeleteModelResponse,
     EditImageConfig, EditImageResponse, EmbedContentConfig, EmbedContentResponse,
     GenerateContentConfig, GenerateContentRequest, GenerateImagesConfig, GenerateImagesResponse,
-    GenerateVideosConfig, GenerateVideosSource, Image, ListModelsConfig, ListModelsResponse, Model,
-    RecontextImageConfig, RecontextImageResponse, RecontextImageSource, ReferenceImage,
-    SegmentImageConfig, SegmentImageResponse, SegmentImageSource, UpdateModelConfig,
+    GenerateVideosConfig, GenerateVideosOperation, GenerateVideosSource, Image, ListModelsConfig,
+    ListModelsResponse, Model, RecontextImageConfig, RecontextImageResponse, RecontextImageSource,
+    ReferenceImage, SegmentImageConfig, SegmentImageResponse, SegmentImageSource, UpdateModelConfig,
 };
 use rust_genai_types::response::GenerateContentResponse;
 
@@ -1013,7 +1013,7 @@ impl Models {
         model: impl Into<String>,
         source: GenerateVideosSource,
         mut config: GenerateVideosConfig,
-    ) -> Result<rust_genai_types::operations::Operation> {
+    ) -> Result<GenerateVideosOperation> {
         let http_options = config.http_options.take();
         let model = model.into();
         let mut body = build_generate_videos_body(self.inner.config.backend, &source, &config)?;
@@ -1050,7 +1050,7 @@ impl Models {
         model: impl Into<String>,
         prompt: impl Into<String>,
         config: GenerateVideosConfig,
-    ) -> Result<rust_genai_types::operations::Operation> {
+    ) -> Result<GenerateVideosOperation> {
         let source = GenerateVideosSource {
             prompt: Some(prompt.into()),
             ..GenerateVideosSource::default()
