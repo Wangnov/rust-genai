@@ -46,7 +46,10 @@ impl Documents {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -82,7 +85,10 @@ impl Documents {
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -118,7 +124,10 @@ impl Documents {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),

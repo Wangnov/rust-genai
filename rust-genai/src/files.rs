@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use reqwest::header::{HeaderName, HeaderValue};
 
-use crate::client::{Backend, ClientInner};
 use crate::client::Credentials;
+use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
 use crate::upload;
 #[cfg(test)]
@@ -279,7 +279,10 @@ impl Files {
             .json(&serde_json::json!({ "uris": uris }));
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),

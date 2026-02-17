@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use reqwest::{Client as HttpClient, Proxy};
@@ -15,6 +15,7 @@ use google_cloud_auth::credentials::{
     Builder as AuthBuilder, CacheableResource, Credentials as GoogleCredentials,
 };
 use http::Extensions;
+use rust_genai_types::http::HttpRetryOptions;
 
 /// Gemini 客户端。
 #[derive(Clone)]
@@ -89,6 +90,7 @@ pub struct HttpOptions {
     pub headers: HashMap<String, String>,
     pub base_url: Option<String>,
     pub api_version: Option<String>,
+    pub retry_options: Option<HttpRetryOptions>,
 }
 
 impl Client {
@@ -335,6 +337,13 @@ impl ClientBuilder {
     #[must_use]
     pub fn api_version(mut self, api_version: impl Into<String>) -> Self {
         self.http_options.api_version = Some(api_version.into());
+        self
+    }
+
+    /// 设置 HTTP 重试选项。
+    #[must_use]
+    pub fn retry_options(mut self, retry_options: HttpRetryOptions) -> Self {
+        self.http_options.retry_options = Some(retry_options);
         self
     }
 
@@ -610,13 +619,99 @@ impl AuthProvider {
     }
 }
 
+const DEFAULT_RETRY_ATTEMPTS: u32 = 5; // Including the initial call
+const DEFAULT_RETRY_INITIAL_DELAY_SECS: f64 = 1.0;
+const DEFAULT_RETRY_MAX_DELAY_SECS: f64 = 60.0;
+const DEFAULT_RETRY_EXP_BASE: f64 = 2.0;
+const DEFAULT_RETRY_JITTER: f64 = 1.0;
+const DEFAULT_RETRY_HTTP_STATUS_CODES: [u16; 6] = [408, 429, 500, 502, 503, 504];
+
 impl ClientInner {
     /// 发送请求并自动注入鉴权头。
     ///
     /// # Errors
     /// 当请求构建、鉴权头获取或网络请求失败时返回错误。
     pub async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
-        let mut request = request.build()?;
+        self.send_with_http_options(request, None).await
+    }
+
+    /// 发送请求（支持 per-request HTTP options，例如 retry_options）。
+    ///
+    /// # Errors
+    /// 当请求构建、鉴权头获取或网络请求失败时返回错误。
+    pub async fn send_with_http_options(
+        &self,
+        request: reqwest::RequestBuilder,
+        request_http_options: Option<&rust_genai_types::http::HttpOptions>,
+    ) -> Result<reqwest::Response> {
+        let retry_options = request_http_options
+            .and_then(|options| options.retry_options.as_ref())
+            .or(self.config.http_options.retry_options.as_ref());
+
+        let request_template = request.build()?;
+        if let Some(options) = retry_options {
+            self.execute_with_retry(request_template, options).await
+        } else {
+            self.execute_once(request_template).await
+        }
+    }
+
+    async fn execute_once(&self, mut request: reqwest::Request) -> Result<reqwest::Response> {
+        self.prepare_request(&mut request).await?;
+        Ok(self.http.execute(request).await?)
+    }
+
+    async fn execute_with_retry(
+        &self,
+        request_template: reqwest::Request,
+        retry_options: &HttpRetryOptions,
+    ) -> Result<reqwest::Response> {
+        let attempts = retry_options.attempts.unwrap_or(DEFAULT_RETRY_ATTEMPTS);
+        if attempts <= 1 {
+            return self.execute_once(request_template).await;
+        }
+
+        // If the request body can't be cloned, we can't safely retry.
+        if request_template.try_clone().is_none() {
+            return self.execute_once(request_template).await;
+        }
+
+        let retryable_codes: &[u16] = retry_options
+            .http_status_codes
+            .as_deref()
+            .unwrap_or(&DEFAULT_RETRY_HTTP_STATUS_CODES);
+
+        for attempt in 0..attempts {
+            let request = request_template
+                .try_clone()
+                .expect("request_template is cloneable");
+            let response = self.execute_once(request).await?;
+
+            if response.status().is_success() {
+                return Ok(response);
+            }
+
+            let status = response.status().as_u16();
+            let should_retry = retryable_codes.contains(&status);
+            let is_last_attempt = attempt + 1 >= attempts;
+            if !should_retry || is_last_attempt {
+                return Ok(response);
+            }
+
+            // Drop the response before retrying to release the connection back to the pool.
+            drop(response);
+
+            let delay = retry_delay_secs(retry_options, attempt);
+            if delay > 0.0 {
+                tokio::time::sleep(Duration::from_secs_f64(delay)).await;
+            }
+        }
+
+        // Loop always returns on success or final attempt.
+        unreachable!("retry loop must return a response");
+    }
+
+    async fn prepare_request(&self, request: &mut reqwest::Request) -> Result<()> {
         if let Some(headers) = self.auth_headers().await? {
             for (name, value) in &headers {
                 if request.headers().contains_key(name) {
@@ -631,7 +726,7 @@ impl ClientInner {
         }
         #[cfg(feature = "mcp")]
         crate::mcp::append_mcp_usage_header(request.headers_mut())?;
-        Ok(self.http.execute(request).await?)
+        Ok(())
     }
 
     async fn auth_headers(&self) -> Result<Option<HeaderMap>> {
@@ -642,6 +737,49 @@ impl ClientInner {
         let scopes: Vec<&str> = self.config.auth_scopes.iter().map(String::as_str).collect();
         let headers = provider.headers(&scopes).await?;
         Ok(Some(headers))
+    }
+}
+
+fn retry_delay_secs(options: &HttpRetryOptions, retry_index: u32) -> f64 {
+    let initial = options
+        .initial_delay
+        .unwrap_or(DEFAULT_RETRY_INITIAL_DELAY_SECS)
+        .max(0.0);
+    let max_delay = options
+        .max_delay
+        .unwrap_or(DEFAULT_RETRY_MAX_DELAY_SECS)
+        .max(0.0);
+    let exp_base = options.exp_base.unwrap_or(DEFAULT_RETRY_EXP_BASE).max(0.0);
+    let jitter = options.jitter.unwrap_or(DEFAULT_RETRY_JITTER).max(0.0);
+
+    let exp_delay = if exp_base == 0.0 {
+        0.0
+    } else {
+        initial * exp_base.powf(retry_index as f64)
+    };
+    let base_delay = if max_delay > 0.0 {
+        exp_delay.min(max_delay)
+    } else {
+        exp_delay
+    };
+
+    let jitter_delay = if jitter > 0.0 {
+        // Basic pseudo-random jitter without adding a new RNG dependency.
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as f64;
+        let frac = (nanos / 1_000_000_000.0).clamp(0.0, 1.0);
+        frac * jitter
+    } else {
+        0.0
+    };
+
+    let delay = base_delay + jitter_delay;
+    if max_delay > 0.0 {
+        delay.min(max_delay)
+    } else {
+        delay
     }
 }
 

@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Client: support configurable HTTP retries (global + per-request via `HttpOptions.retry_options`).
 - Files: support `files:register` (register GCS URIs) for Gemini Developer API with OAuth/ADC.
 - Models: `model_armor_config` support in `GenerateContentConfig` (Vertex AI only).
 - Tunings: `encryption_spec` support in tuning job creation config (Vertex AI only).

@@ -50,7 +50,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -85,7 +88,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -121,7 +127,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -155,7 +164,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -315,7 +327,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -357,7 +372,10 @@ impl FileSearchStores {
             request = request.header("X-Goog-Upload-File-Name", file_name);
         }
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options)
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -439,7 +457,10 @@ impl FileSearchStores {
             .header("Content-Length", data_len.to_string())
             .body(data);
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options)
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
