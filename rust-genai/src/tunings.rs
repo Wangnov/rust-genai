@@ -265,6 +265,11 @@ fn validate_mldev_config(config: &CreateTuningJobConfig) -> Result<()> {
             message: "evaluation_config is not supported in Gemini API".into(),
         });
     }
+    if config.encryption_spec.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "encryption_spec is not supported in Gemini API".into(),
+        });
+    }
     if config.labels.is_some() {
         return Err(Error::InvalidConfig {
             message: "labels is not supported in Gemini API".into(),
@@ -410,6 +415,13 @@ fn build_tune_body_vertex(
 
     if !spec.is_empty() {
         body.insert(spec_key.to_string(), Value::Object(spec));
+    }
+
+    if let Some(encryption_spec) = &config.encryption_spec {
+        body.insert(
+            "encryptionSpec".to_string(),
+            serde_json::to_value(encryption_spec)?,
+        );
     }
 
     if let Some(labels) = &config.labels {
@@ -802,7 +814,7 @@ mod tests {
     };
     use rust_genai_types::http::HttpOptions as TypesHttpOptions;
     use rust_genai_types::tunings::{
-        EvaluationConfig, TuningDataset, TuningExample, TuningValidationDataset,
+        EncryptionSpec, EvaluationConfig, TuningDataset, TuningExample, TuningValidationDataset,
     };
     use serde_json::json;
     use wiremock::matchers::{method, path, query_param, query_param_is_missing};
@@ -875,6 +887,14 @@ mod tests {
             evaluation_config: Some(rust_genai_types::tunings::EvaluationConfig {
                 metrics: Some(vec![json!({"name": "metric"})]),
                 ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(validate_mldev_config(&config).is_err());
+
+        let config = CreateTuningJobConfig {
+            encryption_spec: Some(EncryptionSpec {
+                kms_key_name: Some("projects/p/locations/l/keyRings/r/cryptoKeys/k".to_string()),
             }),
             ..Default::default()
         };
@@ -1059,6 +1079,9 @@ mod tests {
                 metrics: Some(vec![json!({"name": "metric"})]),
                 ..Default::default()
             }),
+            encryption_spec: Some(EncryptionSpec {
+                kms_key_name: Some("projects/p/locations/l/keyRings/r/cryptoKeys/k".to_string()),
+            }),
             ..Default::default()
         };
         let body =
@@ -1078,6 +1101,7 @@ mod tests {
         );
         assert!(spec.get("evaluationConfig").is_some());
         assert!(body.get("preferenceOptimizationSpec").is_some());
+        assert!(body.get("encryptionSpec").is_some());
     }
 
     #[test]

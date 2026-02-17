@@ -53,6 +53,15 @@ pub struct EvaluationConfig {
     pub autorater_config: Option<Value>,
 }
 
+/// Customer-managed encryption key options for a tuning job (Vertex AI only).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptionSpec {
+    /// Required. The Cloud KMS resource identifier of the customer managed encryption key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kms_key_name: Option<String>,
+}
+
 /// Fine-tuning job creation request - optional fields.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -84,6 +93,9 @@ pub struct CreateTuningJobConfig {
     pub learning_rate: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluation_config: Option<EvaluationConfig>,
+    /// Optional. Customer-managed encryption key options for a TuningJob.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encryption_spec: Option<EncryptionSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
