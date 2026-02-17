@@ -4,14 +4,18 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use reqwest::header::{HeaderName, HeaderValue};
+
 use crate::client::{Backend, ClientInner};
+use crate::client::Credentials;
 use crate::error::{Error, Result};
 use crate::upload;
 #[cfg(test)]
 use crate::upload::CHUNK_SIZE;
 use rust_genai_types::enums::FileState;
 use rust_genai_types::files::{
-    DownloadFileConfig, File, ListFilesConfig, ListFilesResponse, UploadFileConfig,
+    DownloadFileConfig, File, ListFilesConfig, ListFilesResponse, RegisterFilesConfig,
+    RegisterFilesResponse, UploadFileConfig,
 };
 use serde_json::Value;
 
@@ -235,6 +239,59 @@ impl Files {
             });
         }
         Ok(())
+    }
+
+    /// 注册 Google Cloud Storage 文件（使其可用于 Gemini Developer API）。
+    ///
+    /// 该方法要求客户端使用 OAuth/ADC（即 `Credentials::OAuth` 或 `Credentials::ApplicationDefault`），
+    /// **不支持** API key 认证。
+    ///
+    /// # Errors
+    /// 当配置无效、请求失败或响应解析失败时返回错误。
+    pub async fn register_files(&self, uris: Vec<String>) -> Result<RegisterFilesResponse> {
+        self.register_files_with_config(uris, RegisterFilesConfig::default())
+            .await
+    }
+
+    /// 注册 Google Cloud Storage 文件（自定义配置）。
+    ///
+    /// # Errors
+    /// 当配置无效、请求失败或响应解析失败时返回错误。
+    pub async fn register_files_with_config(
+        &self,
+        uris: Vec<String>,
+        mut config: RegisterFilesConfig,
+    ) -> Result<RegisterFilesResponse> {
+        ensure_gemini_backend(&self.inner)?;
+        if matches!(self.inner.config.credentials, Credentials::ApiKey(_)) {
+            return Err(Error::InvalidConfig {
+                message: "register_files requires OAuth/ADC credentials, API key is not supported"
+                    .into(),
+            });
+        }
+
+        let http_options = config.http_options.take();
+        let url = build_files_register_url(&self.inner, http_options.as_ref());
+        let mut request = self
+            .inner
+            .http
+            .post(url)
+            .json(&serde_json::json!({ "uris": uris }));
+        request = apply_http_options(request, http_options.as_ref())?;
+
+        let response = self.inner.send(request).await?;
+        if !response.status().is_success() {
+            return Err(Error::ApiError {
+                status: response.status().as_u16(),
+                message: response.text().await.unwrap_or_default(),
+            });
+        }
+
+        let text = response.text().await.unwrap_or_default();
+        if text.trim().is_empty() {
+            return Ok(RegisterFilesResponse::default());
+        }
+        Ok(serde_json::from_str(&text)?)
     }
 
     /// 轮询直到文件状态变为 ACTIVE。
@@ -501,6 +558,19 @@ fn build_files_list_url(inner: &ClientInner, config: &ListFilesConfig) -> Result
     add_list_query_params(&url, config)
 }
 
+fn build_files_register_url(
+    inner: &ClientInner,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> String {
+    let base = http_options
+        .and_then(|opts| opts.base_url.as_deref())
+        .unwrap_or(&inner.api_client.base_url);
+    let version = http_options
+        .and_then(|opts| opts.api_version.as_deref())
+        .unwrap_or(&inner.api_client.api_version);
+    format!("{base}{version}/files:register")
+}
+
 fn build_file_url(inner: &ClientInner, name: &str) -> String {
     let base = &inner.api_client.base_url;
     let version = &inner.api_client.api_version;
@@ -527,6 +597,30 @@ fn add_list_query_params(url: &str, config: &ListFilesConfig) -> Result<String> 
         }
     }
     Ok(url.to_string())
+}
+
+fn apply_http_options(
+    mut request: reqwest::RequestBuilder,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> Result<reqwest::RequestBuilder> {
+    if let Some(options) = http_options {
+        if let Some(timeout) = options.timeout {
+            request = request.timeout(Duration::from_millis(timeout));
+        }
+        if let Some(headers) = &options.headers {
+            for (key, value) in headers {
+                let name =
+                    HeaderName::from_bytes(key.as_bytes()).map_err(|_| Error::InvalidConfig {
+                        message: format!("Invalid header name: {key}"),
+                    })?;
+                let value = HeaderValue::from_str(value).map_err(|_| Error::InvalidConfig {
+                    message: format!("Invalid header value for {key}"),
+                })?;
+                request = request.header(name, value);
+            }
+        }
+    }
+    Ok(request)
 }
 
 #[cfg(test)]
@@ -556,6 +650,11 @@ mod tests {
         assert_eq!(
             url,
             "https://generativelanguage.googleapis.com/upload/v1beta/files"
+        );
+        let url = build_files_register_url(&files.inner, None);
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/files:register"
         );
     }
 

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{FileSource, FileState};
+use crate::http::HttpOptions;
 
 /// Status of a file that failed to process.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -84,3 +85,21 @@ pub struct UploadFileConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadFileConfig {}
+
+/// Register files configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterFilesConfig {
+    /// Optional. HTTP request overrides (SDK only, not sent to API).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
+}
+
+/// Response for registering files.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterFilesResponse {
+    /// The registered files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<File>>,
+}
