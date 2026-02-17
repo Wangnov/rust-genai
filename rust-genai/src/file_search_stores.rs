@@ -14,10 +14,10 @@ use crate::upload::CHUNK_SIZE;
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::file_search_stores::{
     CreateFileSearchStoreConfig, DeleteFileSearchStoreConfig, FileSearchStore,
-    GetFileSearchStoreConfig, ImportFileConfig, ListFileSearchStoresConfig,
-    ListFileSearchStoresResponse, UploadToFileSearchStoreConfig, UploadToFileSearchStoreResumableResponse,
+    GetFileSearchStoreConfig, ImportFileConfig, ImportFileOperation, ListFileSearchStoresConfig,
+    ListFileSearchStoresResponse, UploadToFileSearchStoreConfig, UploadToFileSearchStoreOperation,
+    UploadToFileSearchStoreResumableResponse,
 };
-use rust_genai_types::operations::Operation;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -226,7 +226,7 @@ impl FileSearchStores {
         file_search_store_name: impl AsRef<str>,
         data: Vec<u8>,
         mut config: UploadToFileSearchStoreConfig,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         ensure_gemini_backend(&self.inner)?;
         let mime_type = config
             .mime_type
@@ -260,7 +260,7 @@ impl FileSearchStores {
         file_search_store_name: impl AsRef<str>,
         path: impl AsRef<Path>,
         mut config: UploadToFileSearchStoreConfig,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         ensure_gemini_backend(&self.inner)?;
         let path = path.as_ref();
         let metadata = tokio::fs::metadata(path).await?;
@@ -352,7 +352,7 @@ impl FileSearchStores {
         file_search_store_name: impl AsRef<str>,
         file_name: impl AsRef<str>,
         mut config: ImportFileConfig,
-    ) -> Result<Operation> {
+    ) -> Result<ImportFileOperation> {
         ensure_gemini_backend(&self.inner)?;
         let http_options = config.http_options.take();
         let store_name = normalize_file_search_store_name(file_search_store_name.as_ref());
@@ -383,7 +383,7 @@ impl FileSearchStores {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<Operation>().await?)
+        Ok(response.json::<ImportFileOperation>().await?)
     }
 
     async fn start_resumable_upload(
@@ -449,7 +449,7 @@ impl FileSearchStores {
         upload_url: &str,
         data: &[u8],
         http_options: Option<&rust_genai_types::http::HttpOptions>,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         let validate_status = |_status: &str| Ok(());
         upload::upload_bytes_with(
             data,
@@ -468,7 +468,7 @@ impl FileSearchStores {
         reader: &mut tokio::fs::File,
         size_bytes: u64,
         http_options: Option<&rust_genai_types::http::HttpOptions>,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         let validate_status = |_status: &str| Ok(());
         upload::upload_reader_with(
             reader,
@@ -489,7 +489,7 @@ impl FileSearchStores {
         offset: u64,
         finalize: bool,
         http_options: Option<&rust_genai_types::http::HttpOptions>,
-    ) -> Result<(String, Option<Operation>)> {
+    ) -> Result<(String, Option<UploadToFileSearchStoreOperation>)> {
         let command = if finalize {
             "upload, finalize"
         } else {
@@ -531,7 +531,7 @@ impl FileSearchStores {
             return Ok((status, None));
         }
 
-        let operation = response.json::<Operation>().await?;
+        let operation = response.json::<UploadToFileSearchStoreOperation>().await?;
         Ok((status, Some(operation)))
     }
 }
@@ -707,7 +707,10 @@ fn merge_extra_body(
 }
 
 #[cfg(test)]
-fn finalize_upload(status: &str, operation: Option<Operation>) -> Result<Operation> {
+fn finalize_upload(
+    status: &str,
+    operation: Option<UploadToFileSearchStoreOperation>,
+) -> Result<UploadToFileSearchStoreOperation> {
     upload::finalize_upload(status, operation)
 }
 
