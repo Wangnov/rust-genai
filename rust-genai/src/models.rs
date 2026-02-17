@@ -253,18 +253,30 @@ impl Models {
         validate_function_response_media(&model, &contents)?;
         validate_code_execution_image_inputs(&model, &contents, config.tools.as_deref())?;
 
+        let backend = self.inner.config.backend;
+        if backend == Backend::GeminiApi && config.model_armor_config.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config is not supported in Gemini API".into(),
+            });
+        }
+        if config.model_armor_config.is_some() && config.safety_settings.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config cannot be combined with safety_settings".into(),
+            });
+        }
+
         let request = GenerateContentRequest {
             contents,
             system_instruction: config.system_instruction,
             generation_config: config.generation_config,
             safety_settings: config.safety_settings,
+            model_armor_config: config.model_armor_config,
             tools: config.tools,
             tool_config: config.tool_config,
             cached_content: config.cached_content,
             labels: config.labels,
         };
 
-        let backend = self.inner.config.backend;
         let url = build_model_method_url(&self.inner, &model, "generateContent")?;
         let body = match backend {
             Backend::GeminiApi => converters::generate_content_request_to_mldev(&request)?,
@@ -460,11 +472,24 @@ impl Models {
         validate_function_response_media(&model, &contents)?;
         validate_code_execution_image_inputs(&model, &contents, config.tools.as_deref())?;
 
+        let backend = self.inner.config.backend;
+        if backend == Backend::GeminiApi && config.model_armor_config.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config is not supported in Gemini API".into(),
+            });
+        }
+        if config.model_armor_config.is_some() && config.safety_settings.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config cannot be combined with safety_settings".into(),
+            });
+        }
+
         let request = GenerateContentRequest {
             contents,
             system_instruction: config.system_instruction,
             generation_config: config.generation_config,
             safety_settings: config.safety_settings,
+            model_armor_config: config.model_armor_config,
             tools: config.tools,
             tool_config: config.tool_config,
             cached_content: config.cached_content,

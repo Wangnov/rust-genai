@@ -76,6 +76,20 @@ pub struct SafetySetting {
     pub method: Option<HarmBlockMethod>,
 }
 
+/// Configuration for Model Armor integrations of prompt and responses.
+///
+/// This data type is not supported in Gemini API.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelArmorConfig {
+    /// Optional. The name of the Model Armor template to use for prompt sanitization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_template_name: Option<String>,
+    /// Optional. The name of the Model Armor template to use for response sanitization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_template_name: Option<String>,
+}
+
 /// Thinking 配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

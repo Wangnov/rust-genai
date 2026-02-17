@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::base64_serde;
-use crate::config::{GenerationConfig, SafetySetting};
+use crate::config::{GenerationConfig, ModelArmorConfig, SafetySetting};
 use crate::content::Content;
 use crate::enums::{
     ControlReferenceType, EditMode, ImagePromptLanguage, MaskReferenceMode, PersonGeneration,
@@ -22,6 +22,10 @@ pub struct GenerateContentConfig {
     pub generation_config: Option<GenerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
+    /// Settings for prompt and response sanitization using the Model Armor service.
+    /// If supplied, `safety_settings` must not be supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_armor_config: Option<ModelArmorConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,6 +50,10 @@ pub struct GenerateContentRequest {
     pub generation_config: Option<GenerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
+    /// Settings for prompt and response sanitization using the Model Armor service.
+    /// If supplied, `safety_settings` must not be supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_armor_config: Option<ModelArmorConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]

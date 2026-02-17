@@ -149,6 +149,7 @@ mod tests {
             tools: None,
             tool_config: None,
             generation_config: None,
+            model_armor_config: None,
             cached_content: None,
             labels: None,
         };
