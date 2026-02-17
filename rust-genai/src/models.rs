@@ -25,7 +25,7 @@ use crate::afc::{
 };
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
-use crate::http_response::sdk_http_response_from_headers;
+use crate::http_response::{sdk_http_response_from_headers, sdk_http_response_from_headers_and_body};
 use crate::model_capabilities::{
     validate_code_execution_image_inputs, validate_function_response_media,
 };
@@ -249,6 +249,7 @@ impl Models {
         contents: Vec<Content>,
         config: GenerateContentConfig,
     ) -> Result<GenerateContentResponse> {
+        let should_return_http_response = config.should_return_http_response.unwrap_or(false);
         let model = model.into();
         validate_temperature(&model, &config)?;
         ThoughtSignatureValidator::new(&model).validate(&contents)?;
@@ -294,6 +295,19 @@ impl Models {
             });
         }
         let headers = response.headers().clone();
+        if should_return_http_response {
+            let body = response.text().await.unwrap_or_default();
+            return Ok(GenerateContentResponse {
+                sdk_http_response: Some(sdk_http_response_from_headers_and_body(&headers, body)),
+                candidates: Vec::new(),
+                create_time: None,
+                automatic_function_calling_history: None,
+                prompt_feedback: None,
+                usage_metadata: None,
+                model_version: None,
+                response_id: None,
+            });
+        }
         let value = response.json::<Value>().await?;
         let mut result = match backend {
             Backend::GeminiApi => converters::generate_content_response_from_mldev(value)?,
@@ -315,6 +329,12 @@ impl Models {
         config: GenerateContentConfig,
         mut callable_tools: Vec<Box<dyn CallableTool>>,
     ) -> Result<GenerateContentResponse> {
+        if config.should_return_http_response.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "should_return_http_response is not supported in callable tools methods"
+                    .into(),
+            });
+        }
         let model = model.into();
         if callable_tools.is_empty() {
             return self
@@ -412,6 +432,12 @@ impl Models {
         config: GenerateContentConfig,
         mut callable_tools: Vec<Box<dyn CallableTool>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>> {
+        if config.should_return_http_response.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "should_return_http_response is not supported in callable tools methods"
+                    .into(),
+            });
+        }
         let model = model.into();
         if callable_tools.is_empty() {
             return self.generate_content_stream(model, contents, config).await;
@@ -470,6 +496,11 @@ impl Models {
         contents: Vec<Content>,
         config: GenerateContentConfig,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>> {
+        if config.should_return_http_response.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "should_return_http_response is not supported in streaming methods".into(),
+            });
+        }
         let model = model.into();
         validate_temperature(&model, &config)?;
         ThoughtSignatureValidator::new(&model).validate(&contents)?;

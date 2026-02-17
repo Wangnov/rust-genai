@@ -96,6 +96,9 @@ pub struct RegisterFilesConfig {
     /// Optional. HTTP request overrides (SDK only, not sent to API).
     #[serde(skip_serializing, skip_deserializing)]
     pub http_options: Option<HttpOptions>,
+    /// Optional. If true, returns the raw HTTP response body in `sdk_http_response.body` (SDK only).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub should_return_http_response: Option<bool>,
 }
 
 /// Response for registering files.

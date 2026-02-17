@@ -37,6 +37,11 @@ pub struct GenerateContentConfig {
     pub cached_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<HashMap<String, String>>,
+    /// Optional. If true, returns the raw HTTP response body in `sdk_http_response.body` (SDK only).
+    ///
+    /// Note: Not supported in streaming methods.
+    #[serde(skip_serializing, skip_deserializing)]
+    pub should_return_http_response: Option<bool>,
 }
 
 /// `GenerateContent` 请求体。

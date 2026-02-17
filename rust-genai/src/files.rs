@@ -9,7 +9,7 @@ use reqwest::header::{HeaderName, HeaderValue};
 use crate::client::Credentials;
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
-use crate::http_response::sdk_http_response_from_headers;
+use crate::http_response::{sdk_http_response_from_headers, sdk_http_response_from_headers_and_body};
 use crate::upload;
 #[cfg(test)]
 use crate::upload::CHUNK_SIZE;
@@ -282,6 +282,7 @@ impl Files {
             });
         }
 
+        let should_return_http_response = config.should_return_http_response.unwrap_or(false);
         let http_options = config.http_options.take();
         let url = build_files_register_url(&self.inner, http_options.as_ref());
         let mut request = self
@@ -304,6 +305,12 @@ impl Files {
 
         let headers = response.headers().clone();
         let text = response.text().await.unwrap_or_default();
+        if should_return_http_response {
+            let mut result = RegisterFilesResponse::default();
+            result.sdk_http_response =
+                Some(sdk_http_response_from_headers_and_body(&headers, text));
+            return Ok(result);
+        }
         if text.trim().is_empty() {
             let mut result = RegisterFilesResponse::default();
             result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));

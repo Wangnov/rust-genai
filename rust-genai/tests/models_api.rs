@@ -51,6 +51,89 @@ async fn test_generate_content_gemini_api() {
 }
 
 #[tokio::test]
+async fn test_generate_content_should_return_http_response() {
+    let mock_server = MockServer::start().await;
+    let response_body = json!({
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {"text": "Hello"}
+                    ]
+                }
+            }
+        ]
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-test", "1")
+                .set_body_json(response_body.clone()),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let client = build_gemini_client(&mock_server.uri());
+    let config = GenerateContentConfig {
+        should_return_http_response: Some(true),
+        ..Default::default()
+    };
+    let response = client
+        .models()
+        .generate_content_with_config("gemini-2.0-flash", vec![Content::text("Test")], config)
+        .await
+        .unwrap();
+
+    assert!(response.candidates.is_empty());
+
+    let sdk_http_response = response.sdk_http_response.unwrap();
+    assert_eq!(
+        sdk_http_response
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get("x-test"))
+            .map(String::as_str),
+        Some("1")
+    );
+    let body = sdk_http_response.body.unwrap();
+    let body_json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body_json, response_body);
+}
+
+#[tokio::test]
+async fn test_generate_content_stream_should_return_http_response_rejected() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_string("data: [DONE]\n\n"))
+        .mount(&mock_server)
+        .await;
+
+    let client = build_gemini_client(&mock_server.uri());
+    let config = GenerateContentConfig {
+        should_return_http_response: Some(true),
+        ..Default::default()
+    };
+
+    let result = client
+        .models()
+        .generate_content_stream(
+            "gemini-2.0-flash",
+            vec![Content::text("Test")],
+            config,
+        )
+        .await;
+
+    assert!(matches!(result, Err(Error::InvalidConfig { .. })));
+}
+
+#[tokio::test]
 async fn test_sse_streaming() {
     let mock_server = MockServer::start().await;
     let sse_body = concat!(
