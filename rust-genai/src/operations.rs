@@ -33,6 +33,30 @@ impl Operations {
             .await
     }
 
+    /// 获取操作状态（以 Operation 作为输入，便于链式轮询）。
+    ///
+    /// # Errors
+    /// 当 operation 缺少名称或请求失败时返回错误。
+    pub async fn get_operation(&self, operation: Operation) -> Result<Operation> {
+        self.get_operation_with_config(operation, GetOperationConfig::default())
+            .await
+    }
+
+    /// 获取操作状态（以 Operation 作为输入，带配置）。
+    ///
+    /// # Errors
+    /// 当 operation 缺少名称或请求失败时返回错误。
+    pub async fn get_operation_with_config(
+        &self,
+        operation: Operation,
+        config: GetOperationConfig,
+    ) -> Result<Operation> {
+        let name = operation.name.ok_or_else(|| Error::InvalidConfig {
+            message: "Operation name is empty".into(),
+        })?;
+        self.get_with_config(name, config).await
+    }
+
     /// 获取操作状态（带配置）。
     ///
     /// # Errors
