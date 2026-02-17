@@ -244,6 +244,14 @@ impl Client {
         crate::tokens::AuthTokens::new(self.inner.clone())
     }
 
+    /// 访问 Tokens API（Ephemeral Tokens）。
+    ///
+    /// 与官方 SDK 的 `tokens` 命名保持一致（等价于 `auth_tokens()`）。
+    #[must_use]
+    pub fn tokens(&self) -> crate::tokens::Tokens {
+        self.auth_tokens()
+    }
+
     /// 访问 Interactions API。
     #[must_use]
     pub fn interactions(&self) -> crate::interactions::Interactions {
