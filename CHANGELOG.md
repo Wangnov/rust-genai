@@ -11,9 +11,12 @@ All notable changes to this project will be documented in this file.
 - Batches: `metadata` field in inlined responses.
 - Tokenizer: add `gemini-3-pro-preview` local tokenizer mapping.
 - Interactions: support `include_input` (and related query params) on Get Interaction.
+- Interactions: align create/get streaming with latest SSE event schema (event_id, content delta, error events).
+- Interactions: add agent-based create (`agent`, `agent_config`) and interactions-specific tool + generation config types.
+- Interactions: add `get_stream` / `get_stream_with_config`.
 
 ### Changed
-- (none)
+- DeepResearch: now uses the Deep Research agent (`deep-research-pro-preview-12-2025`) with `agent` / `agent_config` (instead of `model`).
 
 ## [0.1.0] - 2025-12-26
 

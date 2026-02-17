@@ -2,16 +2,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::config::SafetySetting;
-use crate::config::{GenerationConfig, SpeechConfig};
 use crate::http::HttpOptions;
-use crate::tool::{Tool, ToolConfig};
 
 /// Interactions 输入（支持文本、内容列表或完整 turns）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InteractionInput {
     Text(String),
+    Content(InteractionContent),
     Contents(Vec<InteractionContent>),
     Turns(Vec<InteractionTurn>),
 }
@@ -20,6 +18,11 @@ impl InteractionInput {
     #[must_use]
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text(text.into())
+    }
+
+    #[must_use]
+    pub const fn content(content: InteractionContent) -> Self {
+        Self::Content(content)
     }
 
     #[must_use]
@@ -78,7 +81,7 @@ pub struct InteractionContent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub summary: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub urls: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -127,16 +130,34 @@ impl InteractionContent {
 }
 
 /// Interactions Turn。
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct InteractionTurn {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<Vec<InteractionContent>>,
+    pub role: String,
+    pub content: InteractionTurnContent,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+/// Turn 的 content 字段：可以是 string 或 content 数组。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InteractionTurnContent {
+    Text(String),
+    Contents(Vec<InteractionContent>),
+}
+
+impl InteractionTurnContent {
+    #[must_use]
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text(text.into())
+    }
+
+    #[must_use]
+    pub const fn contents(contents: Vec<InteractionContent>) -> Self {
+        Self::Contents(contents)
+    }
 }
 
 /// Interactions 生成响应模态。
@@ -169,33 +190,226 @@ pub enum InteractionThinkingSummaries {
     NoneValue,
 }
 
-/// AgentConfig（可选）。
+/// Tool choice mode（Interactions）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolChoiceType {
+    Auto,
+    Any,
+    #[serde(rename = "none")]
+    NoneValue,
+    Validated,
+}
+
+/// The configuration for allowed tools.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub struct InteractionAgentConfig {
+pub struct AllowedTools {
+    /// The mode of the tool choice.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<InteractionInput>,
+    pub mode: Option<ToolChoiceType>,
+    /// The names of the allowed tools.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
+    pub tools: Option<Vec<String>>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Tool choice config wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct ToolChoiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_config: Option<ToolConfig>,
+    pub allowed_tools: Option<AllowedTools>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// ToolChoice: a string mode or a config object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    Type(ToolChoiceType),
+    Config(ToolChoiceConfig),
+}
+
+/// Computer-use tool configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ComputerUseTool {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<Value>,
+    pub environment: Option<String>,
+    #[serde(rename = "excludedPredefinedFunctions")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub generation_config: Option<GenerationConfig>,
+    pub excluded_predefined_functions: Option<Vec<String>>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// MCP server tool configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct McpServerTool {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_modalities: Option<Vec<InteractionResponseModality>>,
+    pub allowed_tools: Option<Vec<AllowedTools>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// File search tool configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct FileSearchTool {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_search_store_names: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i32>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Function tool configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FunctionTool {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// JSON schema for the function parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Value>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Interactions tool declarations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum Tool {
+    #[serde(rename = "function")]
+    Function(FunctionTool),
+    #[serde(rename = "google_search")]
+    GoogleSearch,
+    #[serde(rename = "code_execution")]
+    CodeExecution,
+    #[serde(rename = "url_context")]
+    UrlContext,
+    #[serde(rename = "computer_use")]
+    ComputerUse(ComputerUseTool),
+    #[serde(rename = "mcp_server")]
+    McpServer(McpServerTool),
+    #[serde(rename = "file_search")]
+    FileSearch(FileSearchTool),
+}
+
+/// The configuration for speech interaction.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct SpeechConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// The configuration for image interaction.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct ImageConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_ratio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<String>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Configuration parameters for model interactions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct GenerationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<InteractionThinkingLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_summaries: Option<InteractionThinkingSummaries>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub speech_config: Option<SpeechConfig>,
+    pub max_output_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub safety_settings: Option<Vec<SafetySetting>>,
+    pub speech_config: Option<Vec<SpeechConfig>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_config: Option<ImageConfig>,
+    /// Forward-compatible extension fields.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+/// Configuration for dynamic agents.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DynamicAgentConfig {
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Configuration for the Deep Research agent.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct DeepResearchAgentConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_summaries: Option<InteractionThinkingSummaries>,
+    /// Forward-compatible extension fields.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Agent configuration union (discriminator: `type`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AgentConfig {
+    #[serde(rename = "dynamic")]
+    Dynamic(DynamicAgentConfig),
+    #[serde(rename = "deep-research")]
+    DeepResearch(DeepResearchAgentConfig),
 }
 
 /// Create Interaction 配置（请求体）。
@@ -205,58 +419,75 @@ pub struct CreateInteractionConfig {
     /// Optional. HTTP request overrides (SDK only).
     #[serde(skip_serializing, skip_deserializing)]
     pub http_options: Option<HttpOptions>,
-    pub model: String,
+    /// The name of the `Model` used for generating the interaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The name of the `Agent` used for generating the interaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     pub input: InteractionInput,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_config: Option<ToolConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GenerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub safety_settings: Option<Vec<SafetySetting>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<InteractionInput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_modalities: Option<Vec<InteractionResponseModality>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_level: Option<InteractionThinkingLevel>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_summaries: Option<InteractionThinkingSummaries>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allow_concurrent_tool_calls: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_config: Option<InteractionAgentConfig>,
+    pub agent_config: Option<AgentConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub labels: Option<HashMap<String, String>>,
+    pub previous_interaction_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_modalities: Option<Vec<InteractionResponseModality>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
 }
 
 impl CreateInteractionConfig {
     pub fn new(model: impl Into<String>, input: impl Into<InteractionInput>) -> Self {
         Self {
             http_options: None,
-            model: model.into(),
+            model: Some(model.into()),
+            agent: None,
             input: input.into(),
             tools: None,
-            tool_choice: None,
-            tool_config: None,
             generation_config: None,
-            safety_settings: None,
-            system_instruction: None,
-            response_modalities: None,
-            thinking_level: None,
-            thinking_summaries: None,
-            allow_concurrent_tool_calls: None,
             agent_config: None,
             background: None,
             store: None,
-            labels: None,
+            previous_interaction_id: None,
+            response_format: None,
+            response_mime_type: None,
+            response_modalities: None,
+            system_instruction: None,
+            stream: None,
+        }
+    }
+
+    pub fn new_agent(agent: impl Into<String>, input: impl Into<InteractionInput>) -> Self {
+        Self {
+            http_options: None,
+            model: None,
+            agent: Some(agent.into()),
+            input: input.into(),
+            tools: None,
+            generation_config: None,
+            agent_config: None,
+            background: None,
+            store: None,
+            previous_interaction_id: None,
+            response_format: None,
+            response_mime_type: None,
+            response_modalities: None,
+            system_instruction: None,
+            stream: None,
         }
     }
 }
@@ -318,15 +549,32 @@ pub struct InteractionUsageBucket {
 #[serde(rename_all = "snake_case")]
 pub struct InteractionUsage {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_tokens: Option<i32>,
+    pub total_input_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_tokens: Option<i32>,
+    pub total_output_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_thought_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_cached_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tool_use_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_token_details: Option<InteractionUsageBucket>,
+    pub input_tokens_by_modality: Option<Vec<InteractionTokensByModality>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Token usage by modality.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct InteractionTokensByModality {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_token_details: Option<InteractionUsageBucket>,
+    pub modality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<i32>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
@@ -359,6 +607,8 @@ pub struct Interaction {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<InteractionUsage>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_interaction_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
@@ -370,12 +620,50 @@ pub struct Interaction {
 /// SSE 事件载荷。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub struct InteractionEvent {
+pub struct InteractionSseEvent {
     #[serde(rename = "event_type", alias = "eventType")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_type: Option<String>,
+    #[serde(rename = "event_id", alias = "eventId")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<Interaction>,
+    pub event_id: Option<String>,
+    /// The Interaction resource (present for start/complete events).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction: Option<Interaction>,
+    /// Present for interaction.status_update events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction_id: Option<String>,
+    /// Present for interaction.status_update events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Present for content.* events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<i32>,
+    /// Present for content.start events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<InteractionContent>,
+    /// Present for content.delta events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<InteractionContent>,
+    /// Present for error events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<InteractionError>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Backward-compatible alias.
+#[deprecated(note = "Renamed to InteractionSseEvent")]
+pub type InteractionEvent = InteractionSseEvent;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct InteractionError {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
@@ -400,19 +688,20 @@ mod tests {
     }
 
     #[test]
-    fn interaction_event_roundtrip() {
+    fn interaction_event_start_roundtrip() {
         let json = r#"{
-            "event_type": "interactions.create",
-            "data": {
+            "event_type": "interaction.start",
+            "event_id": "evt_1",
+            "interaction": {
                 "id": "int_123",
-                "model": "gemini-2.0-flash",
-                "outputs": [{"type":"text","text":"ok"}]
+                "status": "in_progress"
             }
         }"#;
-        let event: InteractionEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type.as_deref(), Some("interactions.create"));
+        let event: InteractionSseEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type.as_deref(), Some("interaction.start"));
+        assert_eq!(event.event_id.as_deref(), Some("evt_1"));
         assert_eq!(
-            event.data.as_ref().and_then(|d| d.id.as_deref()),
+            event.interaction.as_ref().and_then(|d| d.id.as_deref()),
             Some("int_123")
         );
     }
@@ -438,7 +727,7 @@ mod tests {
     #[test]
     fn create_interaction_config_new_sets_fields() {
         let config = CreateInteractionConfig::new("model-1", "hello");
-        assert_eq!(config.model, "model-1");
+        assert_eq!(config.model.as_deref(), Some("model-1"));
         match config.input {
             InteractionInput::Text(value) => assert_eq!(value, "hello"),
             _ => panic!("expected text input"),
@@ -448,16 +737,15 @@ mod tests {
     #[test]
     fn interaction_event_alias_event_type() {
         let json = r#"{
-            "eventType": "interactions.update",
-            "data": {
-                "id": "int_456",
-                "model": "gemini-2.0-flash"
-            }
+            "eventType": "interaction.complete",
+            "eventId": "evt_9",
+            "interaction": { "id": "int_456", "status": "completed" }
         }"#;
-        let event: InteractionEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type.as_deref(), Some("interactions.update"));
+        let event: InteractionSseEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type.as_deref(), Some("interaction.complete"));
+        assert_eq!(event.event_id.as_deref(), Some("evt_9"));
         assert_eq!(
-            event.data.as_ref().and_then(|d| d.id.as_deref()),
+            event.interaction.as_ref().and_then(|d| d.id.as_deref()),
             Some("int_456")
         );
     }

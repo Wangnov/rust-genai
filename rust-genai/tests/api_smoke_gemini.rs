@@ -331,13 +331,10 @@ async fn api_smoke_gemini_deep_research() {
     let client = &ctx.client;
     let deep_research = client.deep_research();
 
-    deep_research
-        .start("gemini-2.0-flash", "question")
-        .await
-        .unwrap();
+    deep_research.start("question").await.unwrap();
     let mut deep_stream = deep_research
-        .stream_with_config(types::interactions::CreateInteractionConfig::new(
-            "gemini-2.0-flash",
+        .stream_with_config(types::interactions::CreateInteractionConfig::new_agent(
+            "deep-research-pro-preview-12-2025",
             "question",
         ))
         .await

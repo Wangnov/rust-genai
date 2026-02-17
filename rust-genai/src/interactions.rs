@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::Stream;
-use reqwest::header::{HeaderName, HeaderValue};
+use reqwest::header::{HeaderName, HeaderValue, ACCEPT};
 use rust_genai_types::interactions::{
     CancelInteractionConfig, CreateInteractionConfig, DeleteInteractionConfig,
-    GetInteractionConfig, Interaction, InteractionEvent,
+    GetInteractionConfig, Interaction, InteractionSseEvent,
 };
 use serde_json::Value;
 
@@ -43,6 +43,12 @@ impl Interactions {
         mut config: CreateInteractionConfig,
     ) -> Result<Interaction> {
         ensure_gemini_backend(&self.inner)?;
+        validate_create_config(&config)?;
+        if config.stream.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "Use create_stream() for streaming interactions".into(),
+            });
+        }
         let http_options = config.http_options.take();
         let url = build_interactions_url(&self.inner, http_options.as_ref());
         let mut request = self.inner.http.post(url).json(&config);
@@ -65,12 +71,18 @@ impl Interactions {
     pub async fn create_stream(
         &self,
         mut config: CreateInteractionConfig,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<InteractionEvent>> + Send>>> {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<InteractionSseEvent>> + Send>>> {
         ensure_gemini_backend(&self.inner)?;
+        validate_create_config(&config)?;
+        config.stream = Some(true);
         let http_options = config.http_options.take();
-        let mut url = build_interactions_url(&self.inner, http_options.as_ref());
-        url.push_str("?alt=sse");
-        let mut request = self.inner.http.post(url).json(&config);
+        let url = build_interactions_url(&self.inner, http_options.as_ref());
+        let mut request = self
+            .inner
+            .http
+            .post(url)
+            .header(ACCEPT, "text/event-stream")
+            .json(&config);
         request = apply_http_options(request, http_options.as_ref())?;
 
         let response = self.inner.send(request).await?;
@@ -81,7 +93,7 @@ impl Interactions {
             });
         }
 
-        let stream = parse_sse_stream_with::<InteractionEvent>(response);
+        let stream = parse_sse_stream_with::<InteractionSseEvent>(response);
         Ok(Box::pin(stream))
     }
 
@@ -104,6 +116,20 @@ impl Interactions {
         mut config: GetInteractionConfig,
     ) -> Result<Interaction> {
         ensure_gemini_backend(&self.inner)?;
+        if config.stream.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "Use get_stream_with_config() for streaming interactions".into(),
+            });
+        }
+        if config
+            .last_event_id
+            .as_ref()
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Err(Error::InvalidConfig {
+                message: "last_event_id can only be used when stream is true".into(),
+            });
+        }
         let http_options = config.http_options.take();
         let name = normalize_interaction_name(id.as_ref());
         let url = build_interaction_url(&self.inner, &name, http_options.as_ref());
@@ -119,6 +145,48 @@ impl Interactions {
             });
         }
         parse_interaction_response(response).await
+    }
+
+    /// 获取 Interaction（流式 SSE）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
+    pub async fn get_stream(
+        &self,
+        id: impl AsRef<str>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<InteractionSseEvent>> + Send>>> {
+        self.get_stream_with_config(id, GetInteractionConfig::default())
+            .await
+    }
+
+    /// 获取 Interaction（流式 SSE，带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
+    pub async fn get_stream_with_config(
+        &self,
+        id: impl AsRef<str>,
+        mut config: GetInteractionConfig,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<InteractionSseEvent>> + Send>>> {
+        ensure_gemini_backend(&self.inner)?;
+        config.stream = Some(true);
+        let http_options = config.http_options.take();
+        let name = normalize_interaction_name(id.as_ref());
+        let url = build_interaction_url(&self.inner, &name, http_options.as_ref());
+        let url = add_get_query_params(&url, &config)?;
+        let mut request = self.inner.http.get(url).header(ACCEPT, "text/event-stream");
+        request = apply_http_options(request, http_options.as_ref())?;
+
+        let response = self.inner.send(request).await?;
+        if !response.status().is_success() {
+            return Err(Error::ApiError {
+                status: response.status().as_u16(),
+                message: response.text().await.unwrap_or_default(),
+            });
+        }
+
+        let stream = parse_sse_stream_with::<InteractionSseEvent>(response);
+        Ok(Box::pin(stream))
     }
 
     /// 删除 Interaction。
@@ -243,7 +311,10 @@ fn add_get_query_params(url: &str, config: &GetInteractionConfig) -> Result<Stri
     {
         let mut pairs = url.query_pairs_mut();
         if let Some(include_input) = config.include_input {
-            pairs.append_pair("include_input", if include_input { "true" } else { "false" });
+            pairs.append_pair(
+                "include_input",
+                if include_input { "true" } else { "false" },
+            );
         }
         if let Some(stream) = config.stream {
             pairs.append_pair("stream", if stream { "true" } else { "false" });
@@ -263,7 +334,7 @@ fn build_interaction_cancel_url(
     http_options: Option<&rust_genai_types::http::HttpOptions>,
 ) -> String {
     format!(
-        "{}:cancel",
+        "{}/cancel",
         build_interaction_url(inner, name, http_options)
     )
 }
@@ -302,6 +373,40 @@ async fn parse_interaction_response(response: reqwest::Response) -> Result<Inter
     Ok(interaction)
 }
 
+fn validate_create_config(config: &CreateInteractionConfig) -> Result<()> {
+    let model = config.model.as_deref().unwrap_or_default().trim();
+    let agent = config.agent.as_deref().unwrap_or_default().trim();
+
+    if model.is_empty() && agent.is_empty() {
+        return Err(Error::InvalidConfig {
+            message: "Either model or agent must be provided".into(),
+        });
+    }
+    if !model.is_empty() && !agent.is_empty() {
+        return Err(Error::InvalidConfig {
+            message: "model and agent cannot both be set".into(),
+        });
+    }
+    if !model.is_empty() && config.agent_config.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "Invalid request: specified model and agent_config. If specifying model, use generation_config.".into(),
+        });
+    }
+    if !agent.is_empty() && config.generation_config.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "Invalid request: specified agent and generation_config. If specifying agent, use agent_config.".into(),
+        });
+    }
+
+    if config.response_format.is_some() && config.response_mime_type.is_none() {
+        return Err(Error::InvalidConfig {
+            message: "response_mime_type is required when response_format is set".into(),
+        });
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,7 +426,7 @@ mod tests {
         let url = build_interaction_url(&gemini, "interactions/1", None);
         assert!(url.ends_with("/v1beta/interactions/1"));
         let url = build_interaction_cancel_url(&gemini, "interactions/1", None);
-        assert!(url.ends_with("/v1beta/interactions/1:cancel"));
+        assert!(url.ends_with("/v1beta/interactions/1/cancel"));
     }
 
     #[test]
