@@ -1,23 +1,6 @@
-use rust_genai::types::models::{GenerateVideosConfig, GenerateVideosResponse};
+use rust_genai::types::models::{GenerateVideosConfig, GenerateVideosOperation};
 use rust_genai::Client;
-use serde_json::Value;
 use std::path::{Path, PathBuf};
-
-fn normalize_generate_videos_response(mut value: Value) -> Value {
-    if let Value::Object(map) = &mut value {
-        if let Some(inner) = map.get("generateVideoResponse").cloned() {
-            return normalize_generate_videos_response(inner);
-        }
-        if map.get("generatedVideos").is_none() {
-            if let Some(samples) = map.get("generatedSamples").cloned() {
-                map.insert("generatedVideos".to_string(), samples);
-            } else if let Some(videos) = map.get("videos").cloned() {
-                map.insert("generatedVideos".to_string(), videos);
-            }
-        }
-    }
-    value
-}
 
 fn expand_tilde(path: &str) -> String {
     if let Some(stripped) = path.strip_prefix("~/") {
@@ -48,13 +31,13 @@ fn output_video_path() -> PathBuf {
 #[tokio::main]
 async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
-    let operation = if let Ok(name) = std::env::var("GENAI_OPERATION_NAME") {
-        rust_genai::types::operations::Operation {
+    let operation: GenerateVideosOperation = if let Ok(name) = std::env::var("GENAI_OPERATION_NAME") {
+        GenerateVideosOperation {
             name: Some(name),
             ..Default::default()
         }
     } else {
-        let op = client
+        let operation = client
             .models()
             .generate_videos_with_prompt(
                 "veo-3.0-generate-001",
@@ -62,24 +45,22 @@ async fn main() -> rust_genai::Result<()> {
                 GenerateVideosConfig::default(),
             )
             .await?;
-        println!("operation: {:?}", op.name);
-        rust_genai::types::operations::Operation {
-            name: op.name,
-            ..Default::default()
-        }
+        println!("operation: {:?}", operation.name);
+        operation
     };
 
-    let operation = client.operations().wait(operation).await?;
+    let operation = client
+        .operations()
+        .wait_generate_videos_operation(operation)
+        .await?;
     if let Some(error) = operation.error {
         eprintln!("video generation failed: {error:?}");
         return Ok(());
     }
-    let Some(response_value) = operation.response else {
+    let Some(response) = operation.response else {
         eprintln!("operation response is empty");
         return Ok(());
     };
-    let response_value = normalize_generate_videos_response(response_value);
-    let response: GenerateVideosResponse = serde_json::from_value(response_value)?;
     let Some(video) = response
         .generated_videos
         .first()

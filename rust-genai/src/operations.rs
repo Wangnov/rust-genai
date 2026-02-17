@@ -4,9 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
+use rust_genai_types::file_search_stores::{ImportFileOperation, UploadToFileSearchStoreOperation};
+use rust_genai_types::models::GenerateVideosOperation;
 use rust_genai_types::operations::{
     GetOperationConfig, ListOperationsConfig, ListOperationsResponse, Operation,
 };
+use serde_json::Value;
 
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
@@ -142,6 +145,196 @@ impl Operations {
         }
         Ok(operation)
     }
+
+    /// 获取 `GenerateVideos` 操作状态。
+    ///
+    /// Vertex AI 后端会优先使用 `:fetchPredictOperation` 轮询视频生成操作。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或响应解析失败时返回错误。
+    pub async fn get_generate_videos_operation(
+        &self,
+        operation: GenerateVideosOperation,
+    ) -> Result<GenerateVideosOperation> {
+        self.get_generate_videos_operation_with_config(operation, GetOperationConfig::default())
+            .await
+    }
+
+    /// 获取 `GenerateVideos` 操作状态（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或响应解析失败时返回错误。
+    pub async fn get_generate_videos_operation_with_config(
+        &self,
+        operation: GenerateVideosOperation,
+        mut config: GetOperationConfig,
+    ) -> Result<GenerateVideosOperation> {
+        let http_options = config.http_options.take();
+        let backend = self.inner.config.backend;
+        let name = operation.name.ok_or_else(|| Error::InvalidConfig {
+            message: "Operation name is empty".into(),
+        })?;
+
+        let value = match backend {
+            Backend::GeminiApi => self.get_operation_value(&name, http_options.as_ref()).await?,
+            Backend::VertexAi => {
+                // Video generation LROs are polled via `:fetchPredictOperation`.
+                let resource_name = name
+                    .rsplit_once("/operations/")
+                    .map(|(resource, _)| resource)
+                    .filter(|resource| resource.contains("/models/"));
+                if let Some(resource_name) = resource_name {
+                    self.fetch_predict_operation_value(&name, resource_name, http_options.as_ref())
+                        .await?
+                } else {
+                    self.get_operation_value(&name, http_options.as_ref()).await?
+                }
+            }
+        };
+
+        crate::models::parsers::parse_generate_videos_operation(value, backend)
+    }
+
+    /// 等待 `GenerateVideos` 操作完成（轮询）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或轮询过程中响应解析失败时返回错误。
+    pub async fn wait_generate_videos_operation(
+        &self,
+        mut operation: GenerateVideosOperation,
+    ) -> Result<GenerateVideosOperation> {
+        let name = operation.name.clone().ok_or_else(|| Error::InvalidConfig {
+            message: "Operation name is empty".into(),
+        })?;
+        while !operation.done.unwrap_or(false) {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            operation = self
+                .get_generate_videos_operation(GenerateVideosOperation {
+                    name: Some(name.clone()),
+                    ..Default::default()
+                })
+                .await?;
+        }
+        Ok(operation)
+    }
+
+    /// 获取上传到 FileSearchStore 的操作状态（Gemini API only）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或响应解析失败时返回错误。
+    pub async fn get_upload_to_file_search_store_operation(
+        &self,
+        operation: UploadToFileSearchStoreOperation,
+    ) -> Result<UploadToFileSearchStoreOperation> {
+        self.get_upload_to_file_search_store_operation_with_config(
+            operation,
+            GetOperationConfig::default(),
+        )
+        .await
+    }
+
+    /// 获取上传到 FileSearchStore 的操作状态（带配置，Gemini API only）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或响应解析失败时返回错误。
+    pub async fn get_upload_to_file_search_store_operation_with_config(
+        &self,
+        operation: UploadToFileSearchStoreOperation,
+        mut config: GetOperationConfig,
+    ) -> Result<UploadToFileSearchStoreOperation> {
+        if self.inner.config.backend == Backend::VertexAi {
+            return Err(Error::InvalidConfig {
+                message: "UploadToFileSearchStoreOperation is only supported in Gemini API"
+                    .to_string(),
+            });
+        }
+        let http_options = config.http_options.take();
+        let name = operation.name.ok_or_else(|| Error::InvalidConfig {
+            message: "Operation name is empty".into(),
+        })?;
+        let value = self.get_operation_value(&name, http_options.as_ref()).await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// 等待上传到 FileSearchStore 的操作完成（轮询，Gemini API only）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或轮询过程中响应解析失败时返回错误。
+    pub async fn wait_upload_to_file_search_store_operation(
+        &self,
+        mut operation: UploadToFileSearchStoreOperation,
+    ) -> Result<UploadToFileSearchStoreOperation> {
+        let name = operation.name.clone().ok_or_else(|| Error::InvalidConfig {
+            message: "Operation name is empty".into(),
+        })?;
+        while !operation.done.unwrap_or(false) {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            operation = self
+                .get_upload_to_file_search_store_operation(UploadToFileSearchStoreOperation {
+                    name: Some(name.clone()),
+                    ..Default::default()
+                })
+                .await?;
+        }
+        Ok(operation)
+    }
+
+    /// 获取导入文件到 FileSearchStore 的操作状态（Gemini API only）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或响应解析失败时返回错误。
+    pub async fn get_import_file_operation(
+        &self,
+        operation: ImportFileOperation,
+    ) -> Result<ImportFileOperation> {
+        self.get_import_file_operation_with_config(operation, GetOperationConfig::default())
+            .await
+    }
+
+    /// 获取导入文件到 FileSearchStore 的操作状态（带配置，Gemini API only）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或响应解析失败时返回错误。
+    pub async fn get_import_file_operation_with_config(
+        &self,
+        operation: ImportFileOperation,
+        mut config: GetOperationConfig,
+    ) -> Result<ImportFileOperation> {
+        if self.inner.config.backend == Backend::VertexAi {
+            return Err(Error::InvalidConfig {
+                message: "ImportFileOperation is only supported in Gemini API".to_string(),
+            });
+        }
+        let http_options = config.http_options.take();
+        let name = operation.name.ok_or_else(|| Error::InvalidConfig {
+            message: "Operation name is empty".into(),
+        })?;
+        let value = self.get_operation_value(&name, http_options.as_ref()).await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// 等待导入文件到 FileSearchStore 的操作完成（轮询，Gemini API only）。
+    ///
+    /// # Errors
+    /// 当请求失败、操作缺少名称或轮询过程中响应解析失败时返回错误。
+    pub async fn wait_import_file_operation(
+        &self,
+        mut operation: ImportFileOperation,
+    ) -> Result<ImportFileOperation> {
+        let name = operation.name.clone().ok_or_else(|| Error::InvalidConfig {
+            message: "Operation name is empty".into(),
+        })?;
+        while !operation.done.unwrap_or(false) {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            operation = self
+                .get_import_file_operation(ImportFileOperation {
+                    name: Some(name.clone()),
+                    ..Default::default()
+                })
+                .await?;
+        }
+        Ok(operation)
+    }
 }
 
 fn normalize_operation_name(inner: &ClientInner, name: &str) -> Result<String> {
@@ -196,6 +389,75 @@ fn build_operation_url(
         .and_then(|opts| opts.api_version.as_deref())
         .unwrap_or(&inner.api_client.api_version);
     format!("{base}{version}/{name}")
+}
+
+async fn fetch_predict_operation_value(
+    inner: &Arc<ClientInner>,
+    operation_name: &str,
+    resource_name: &str,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> Result<Value> {
+    let base = http_options
+        .and_then(|opts| opts.base_url.as_deref())
+        .unwrap_or(&inner.api_client.base_url);
+    let version = http_options
+        .and_then(|opts| opts.api_version.as_deref())
+        .unwrap_or(&inner.api_client.api_version);
+    let url = format!("{base}{version}/{resource_name}:fetchPredictOperation");
+
+    let mut request = inner
+        .http
+        .post(url)
+        .json(&serde_json::json!({ "operationName": operation_name }));
+    request = apply_http_options(request, http_options)?;
+
+    let response = inner.send_with_http_options(request, http_options).await?;
+    if !response.status().is_success() {
+        return Err(Error::ApiError {
+            status: response.status().as_u16(),
+            message: response.text().await.unwrap_or_default(),
+        });
+    }
+    Ok(response.json::<Value>().await?)
+}
+
+async fn get_operation_value(
+    inner: &Arc<ClientInner>,
+    name: &str,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> Result<Value> {
+    let name = normalize_operation_name(inner, name)?;
+    let url = build_operation_url(inner, &name, http_options);
+    let mut request = inner.http.get(url);
+    request = apply_http_options(request, http_options)?;
+
+    let response = inner.send_with_http_options(request, http_options).await?;
+    if !response.status().is_success() {
+        return Err(Error::ApiError {
+            status: response.status().as_u16(),
+            message: response.text().await.unwrap_or_default(),
+        });
+    }
+    Ok(response.json::<Value>().await?)
+}
+
+impl Operations {
+    async fn fetch_predict_operation_value(
+        &self,
+        operation_name: &str,
+        resource_name: &str,
+        http_options: Option<&rust_genai_types::http::HttpOptions>,
+    ) -> Result<Value> {
+        fetch_predict_operation_value(&self.inner, operation_name, resource_name, http_options).await
+    }
+
+    async fn get_operation_value(
+        &self,
+        name: &str,
+        http_options: Option<&rust_genai_types::http::HttpOptions>,
+    ) -> Result<Value> {
+        get_operation_value(&self.inner, name, http_options).await
+    }
 }
 
 fn build_operations_list_url(

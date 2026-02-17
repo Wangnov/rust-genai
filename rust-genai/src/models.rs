@@ -37,7 +37,7 @@ use serde_json::Value;
 mod builders;
 mod http;
 mod media;
-mod parsers;
+pub(crate) mod parsers;
 
 use builders::{
     build_edit_image_body, build_embed_body_gemini, build_embed_body_vertex,

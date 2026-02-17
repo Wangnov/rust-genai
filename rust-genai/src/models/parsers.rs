@@ -127,7 +127,7 @@ pub(super) fn parse_segment_image_response(value: &Value) -> SegmentImageRespons
     SegmentImageResponse { generated_masks }
 }
 
-pub(super) fn parse_generate_videos_operation(
+pub(crate) fn parse_generate_videos_operation(
     value: Value,
     backend: Backend,
 ) -> Result<GenerateVideosOperation> {
