@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use reqwest::header::{HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::client::Credentials;
 use crate::client::{Backend, ClientInner};
@@ -15,8 +15,9 @@ use crate::upload;
 use crate::upload::CHUNK_SIZE;
 use rust_genai_types::enums::FileState;
 use rust_genai_types::files::{
-    DeleteFileConfig, DeleteFileResponse, DownloadFileConfig, File, GetFileConfig, ListFilesConfig,
-    ListFilesResponse, RegisterFilesConfig, RegisterFilesResponse, UploadFileConfig,
+    CreateFileConfig, CreateFileResponse, DeleteFileConfig, DeleteFileResponse, DownloadFileConfig,
+    File, GetFileConfig, ListFilesConfig, ListFilesResponse, RegisterFilesConfig,
+    RegisterFilesResponse, UploadFileConfig,
 };
 use serde_json::Value;
 
@@ -42,6 +43,62 @@ impl Files {
         self.upload_with_config(data, config).await
     }
 
+    /// 初始化一个文件的 resumable upload，并返回原始 HTTP headers（含 `x-goog-upload-url`）。
+    ///
+    /// 该方法只执行 `start` 请求，不会上传文件内容。
+    ///
+    /// # Errors
+    /// 当配置无效、请求失败或响应解析失败时返回错误。
+    pub async fn create(&self, file: File) -> Result<CreateFileResponse> {
+        self.create_with_config(file, CreateFileConfig::default())
+            .await
+    }
+
+    /// 初始化一个文件的 resumable upload（自定义配置）。
+    ///
+    /// # Errors
+    /// 当配置无效、请求失败或响应解析失败时返回错误。
+    pub async fn create_with_config(
+        &self,
+        mut file: File,
+        mut config: CreateFileConfig,
+    ) -> Result<CreateFileResponse> {
+        ensure_gemini_backend(&self.inner)?;
+
+        let should_return_http_response = config.should_return_http_response.unwrap_or(false);
+        let http_options = config.http_options.take();
+        let mime_type = file.mime_type.clone().ok_or_else(|| Error::InvalidConfig {
+            message: "mime_type is required when creating a resumable upload session".into(),
+        })?;
+        let size_bytes = file
+            .size_bytes
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value.parse::<u64>().map_err(|_| Error::InvalidConfig {
+                    message: format!("Invalid size_bytes: {value}"),
+                })
+            })
+            .transpose()?;
+
+        if let Some(name) = file.name.take() {
+            file.name = Some(normalize_upload_name(&name));
+        }
+
+        let (_, headers, text) = self
+            .start_resumable_upload(file, size_bytes, &mime_type, None, http_options.as_ref())
+            .await?;
+
+        let mut response = CreateFileResponse::default();
+        response.sdk_http_response = Some(if should_return_http_response {
+            sdk_http_response_from_headers_and_body(&headers, text)
+        } else {
+            sdk_http_response_from_headers(&headers)
+        });
+        Ok(response)
+    }
+
     /// 上传文件（自定义配置）。
     ///
     /// # Errors
@@ -62,8 +119,14 @@ impl Files {
             })?;
         let size_bytes = data.len() as u64;
         let file = build_upload_file(config, size_bytes, &mime_type);
-        let upload_url = self
-            .start_resumable_upload(file, size_bytes, &mime_type, None, http_options.as_ref())
+        let (upload_url, _, _) = self
+            .start_resumable_upload(
+                file,
+                Some(size_bytes),
+                &mime_type,
+                None,
+                http_options.as_ref(),
+            )
             .await?;
         self.upload_bytes(&upload_url, &data, http_options.as_ref())
             .await
@@ -108,10 +171,10 @@ impl Files {
 
         let file_name = path.file_name().and_then(|name| name.to_str());
         let file = build_upload_file(config, size_bytes, &mime_type);
-        let upload_url = self
+        let (upload_url, _, _) = self
             .start_resumable_upload(
                 file,
-                size_bytes,
+                Some(size_bytes),
                 &mime_type,
                 file_name,
                 http_options.as_ref(),
@@ -416,26 +479,33 @@ impl Files {
     async fn start_resumable_upload(
         &self,
         file: File,
-        size_bytes: u64,
+        size_bytes: Option<u64>,
         mime_type: &str,
         file_name: Option<&str>,
         http_options: Option<&rust_genai_types::http::HttpOptions>,
-    ) -> Result<String> {
+    ) -> Result<(String, HeaderMap, String)> {
         let url = build_files_upload_url(&self.inner, http_options);
-        let mut request = self.inner.http.post(url)
+        let mut request = self.inner.http.post(url);
+        request = apply_http_options(request, http_options)?;
+        request = request
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
-            .header(
+            .header("X-Goog-Upload-Header-Content-Type", mime_type);
+        if let Some(size_bytes) = size_bytes {
+            request = request.header(
                 "X-Goog-Upload-Header-Content-Length",
                 size_bytes.to_string(),
-            )
-            .header("X-Goog-Upload-Header-Content-Type", mime_type);
+            );
+        }
 
         if let Some(file_name) = file_name {
             request = request.header("X-Goog-Upload-File-Name", file_name);
         }
 
-        let body = serde_json::json!({ "file": file });
+        let mut body = serde_json::json!({ "file": file });
+        if let Some(options) = http_options {
+            merge_extra_body(&mut body, options)?;
+        }
         let request = request.json(&body);
         let response = self
             .inner
@@ -448,15 +518,17 @@ impl Files {
             });
         }
 
-        let upload_url = response
-            .headers()
+        let headers = response.headers().clone();
+        let upload_url = headers
             .get("x-goog-upload-url")
             .and_then(|value| value.to_str().ok())
             .ok_or_else(|| Error::Parse {
                 message: "Missing x-goog-upload-url header".into(),
-            })?;
+            })?
+            .to_string();
+        let text = response.text().await.unwrap_or_default();
 
-        Ok(upload_url.to_string())
+        Ok((upload_url, headers, text))
     }
 
     async fn upload_bytes(
@@ -750,12 +822,34 @@ fn apply_http_options(
     Ok(request)
 }
 
+fn merge_extra_body(
+    body: &mut Value,
+    http_options: &rust_genai_types::http::HttpOptions,
+) -> Result<()> {
+    if let Some(extra) = &http_options.extra_body {
+        match (body, extra) {
+            (Value::Object(body_map), Value::Object(extra_map)) => {
+                for (key, value) in extra_map {
+                    body_map.insert(key.clone(), value.clone());
+                }
+            }
+            (_, _) => {
+                return Err(Error::InvalidConfig {
+                    message: "HttpOptions.extra_body must be an object".into(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::client::Client;
     use crate::test_support::test_client_inner;
     use serde_json::json;
+    use std::collections::HashMap;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -849,7 +943,7 @@ mod tests {
         let files = client.files();
         let file = build_upload_file(UploadFileConfig::default(), 1, "text/plain");
         let err = files
-            .start_resumable_upload(file, 1, "text/plain", None, None)
+            .start_resumable_upload(file, Some(1), "text/plain", None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
@@ -911,6 +1005,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_files_create_resumable_upload_sets_sdk_http_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/upload/v1beta/files"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-goog-upload-url", format!("{}/upload-url", server.uri()))
+                    .set_body_string("raw-body"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Client::builder()
+            .api_key("test-key")
+            .base_url(server.uri())
+            .build()
+            .unwrap();
+        let files = client.files();
+        let file = File {
+            mime_type: Some("text/plain".to_string()),
+            size_bytes: Some("3".to_string()),
+            ..Default::default()
+        };
+
+        let response = files
+            .create_with_config(
+                file,
+                CreateFileConfig {
+                    http_options: Some(rust_genai_types::http::HttpOptions {
+                        headers: Some(HashMap::from([(
+                            "x-test".to_string(),
+                            "1".to_string(),
+                        )])),
+                        extra_body: Some(json!({"extra": "value"})),
+                        ..Default::default()
+                    }),
+                    should_return_http_response: Some(true),
+                },
+            )
+            .await
+            .unwrap();
+
+        let sdk = response.sdk_http_response.unwrap();
+        let headers = sdk.headers.unwrap();
+        assert!(headers.get("x-goog-upload-url").is_some());
+        assert_eq!(sdk.body.as_deref(), Some("raw-body"));
+
+        let received = server.received_requests().await.unwrap();
+        let body = String::from_utf8_lossy(&received[0].body);
+        assert!(body.contains(r#""extra":"value""#));
+        assert!(received[0].headers.get("x-test").is_some());
+    }
+
+    #[tokio::test]
     async fn test_start_resumable_upload_error_response() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -927,7 +1075,7 @@ mod tests {
         let files = client.files();
         let file = build_upload_file(UploadFileConfig::default(), 1, "text/plain");
         let err = files
-            .start_resumable_upload(file, 1, "text/plain", None, None)
+            .start_resumable_upload(file, Some(1), "text/plain", None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::ApiError { .. }));

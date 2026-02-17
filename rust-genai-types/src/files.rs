@@ -75,6 +75,27 @@ pub struct ListFilesResponse {
     pub files: Option<Vec<File>>,
 }
 
+/// Create file request configuration (resumable upload start).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFileConfig {
+    /// Optional. HTTP request overrides (SDK only, not sent to API).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
+    /// Optional. If true, returns the raw HTTP response body in `sdk_http_response.body` (SDK only).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub should_return_http_response: Option<bool>,
+}
+
+/// Response for creating a file (resumable upload start).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFileResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
+}
+
 /// Upload file configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
