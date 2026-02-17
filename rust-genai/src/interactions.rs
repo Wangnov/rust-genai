@@ -107,6 +107,7 @@ impl Interactions {
         let http_options = config.http_options.take();
         let name = normalize_interaction_name(id.as_ref());
         let url = build_interaction_url(&self.inner, &name, http_options.as_ref());
+        let url = add_get_query_params(&url, &config)?;
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
@@ -233,6 +234,27 @@ fn build_interaction_url(
         .and_then(|opts| opts.api_version.as_deref())
         .unwrap_or(&inner.api_client.api_version);
     format!("{base}{version}/{name}")
+}
+
+fn add_get_query_params(url: &str, config: &GetInteractionConfig) -> Result<String> {
+    let mut url = reqwest::Url::parse(url).map_err(|err| Error::InvalidConfig {
+        message: err.to_string(),
+    })?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        if let Some(include_input) = config.include_input {
+            pairs.append_pair("include_input", if include_input { "true" } else { "false" });
+        }
+        if let Some(stream) = config.stream {
+            pairs.append_pair("stream", if stream { "true" } else { "false" });
+        }
+        if let Some(last_event_id) = &config.last_event_id {
+            if !last_event_id.is_empty() {
+                pairs.append_pair("last_event_id", last_event_id);
+            }
+        }
+    }
+    Ok(url.to_string())
 }
 
 fn build_interaction_cancel_url(

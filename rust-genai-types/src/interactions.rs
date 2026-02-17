@@ -267,6 +267,15 @@ impl CreateInteractionConfig {
 pub struct GetInteractionConfig {
     #[serde(skip_serializing, skip_deserializing)]
     pub http_options: Option<HttpOptions>,
+    /// If set to true, includes the input in the response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_input: Option<bool>,
+    /// If set to true, the generated content will be streamed incrementally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    /// Optional. Resumes the interaction stream from the next chunk after the event id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_id: Option<String>,
 }
 
 /// Delete Interaction 配置。
