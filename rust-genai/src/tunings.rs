@@ -260,6 +260,16 @@ fn validate_mldev_config(config: &CreateTuningJobConfig) -> Result<()> {
             message: "adapter_size is not supported in Gemini API".into(),
         });
     }
+    if config.tuning_mode.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "tuning_mode is not supported in Gemini API".into(),
+        });
+    }
+    if config.custom_base_model.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "custom_base_model is not supported in Gemini API".into(),
+        });
+    }
     if config.evaluation_config.is_some() {
         return Err(Error::InvalidConfig {
             message: "evaluation_config is not supported in Gemini API".into(),
@@ -278,6 +288,26 @@ fn validate_mldev_config(config: &CreateTuningJobConfig) -> Result<()> {
     if config.beta.is_some() {
         return Err(Error::InvalidConfig {
             message: "beta is not supported in Gemini API".into(),
+        });
+    }
+    if config.base_teacher_model.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "base_teacher_model is not supported in Gemini API".into(),
+        });
+    }
+    if config.tuned_teacher_model_source.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "tuned_teacher_model_source is not supported in Gemini API".into(),
+        });
+    }
+    if config.sft_loss_weight_multiplier.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "sft_loss_weight_multiplier is not supported in Gemini API".into(),
+        });
+    }
+    if config.output_uri.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "output_uri is not supported in Gemini API".into(),
         });
     }
     Ok(())
@@ -359,6 +389,7 @@ fn build_tune_body_vertex(
     let spec_key = match method {
         TuningMethod::SupervisedFineTuning => "supervisedTuningSpec",
         TuningMethod::PreferenceTuning => "preferenceOptimizationSpec",
+        TuningMethod::Distillation => "distillationSpec",
     };
 
     let mut body = Map::new();
@@ -382,7 +413,7 @@ fn build_tune_body_vertex(
         body.insert("baseModel".to_string(), Value::String(base_model));
     }
 
-    insert_vertex_dataset_uris(training_dataset, config, &mut spec);
+    insert_vertex_dataset_uris(training_dataset, config, method, &mut spec);
 
     if let Some(display_name) = &config.tuned_model_display_name {
         body.insert(
@@ -398,6 +429,12 @@ fn build_tune_body_vertex(
     }
 
     insert_vertex_hyper_params(config, method, &mut body, &mut spec)?;
+
+    if matches!(method, TuningMethod::SupervisedFineTuning) {
+        if let Some(tuning_mode) = config.tuning_mode {
+            spec.insert("tuningMode".to_string(), serde_json::to_value(tuning_mode)?);
+        }
+    }
 
     if let Some(export_last_checkpoint_only) = config.export_last_checkpoint_only {
         spec.insert(
@@ -417,6 +454,39 @@ fn build_tune_body_vertex(
         body.insert(spec_key.to_string(), Value::Object(spec));
     }
 
+    if let Some(custom_base_model) = &config.custom_base_model {
+        body.insert(
+            "customBaseModel".to_string(),
+            Value::String(custom_base_model.clone()),
+        );
+    }
+
+    if let Some(output_uri) = &config.output_uri {
+        body.insert("outputUri".to_string(), Value::String(output_uri.clone()));
+    }
+
+    if let Some(base_teacher_model) = &config.base_teacher_model {
+        let dist = ensure_object_in_parent(&mut body, "distillationSpec");
+        dist.insert(
+            "baseTeacherModel".to_string(),
+            Value::String(base_teacher_model.clone()),
+        );
+    }
+    if let Some(tuned_teacher_model_source) = &config.tuned_teacher_model_source {
+        let dist = ensure_object_in_parent(&mut body, "distillationSpec");
+        dist.insert(
+            "tunedTeacherModelSource".to_string(),
+            Value::String(tuned_teacher_model_source.clone()),
+        );
+    }
+    if let Some(sft_loss_weight_multiplier) = config.sft_loss_weight_multiplier {
+        let dist = ensure_object_in_parent(&mut body, "distillationSpec");
+        let hyper = ensure_object_in_parent(dist, "hyperParameters");
+        if let Some(value) = serde_json::Number::from_f64(f64::from(sft_loss_weight_multiplier)) {
+            hyper.insert("sftLossWeightMultiplier".to_string(), Value::Number(value));
+        }
+    }
+
     if let Some(encryption_spec) = &config.encryption_spec {
         body.insert(
             "encryptionSpec".to_string(),
@@ -432,19 +502,9 @@ fn build_tune_body_vertex(
 }
 
 fn validate_vertex_tuning_inputs(
-    config: &CreateTuningJobConfig,
+    _config: &CreateTuningJobConfig,
     training_dataset: &TuningDataset,
 ) -> Result<()> {
-    if config.batch_size.is_some() {
-        return Err(Error::InvalidConfig {
-            message: "batch_size is not supported in Vertex AI".into(),
-        });
-    }
-    if config.learning_rate.is_some() {
-        return Err(Error::InvalidConfig {
-            message: "learning_rate is not supported in Vertex AI".into(),
-        });
-    }
     if training_dataset.examples.is_some() {
         return Err(Error::InvalidConfig {
             message: "examples is not supported in Vertex AI".into(),
@@ -456,6 +516,7 @@ fn validate_vertex_tuning_inputs(
 fn insert_vertex_dataset_uris(
     training_dataset: &TuningDataset,
     config: &CreateTuningJobConfig,
+    method: TuningMethod,
     spec: &mut Map<String, Value>,
 ) {
     if let Some(uri) = training_dataset
@@ -463,7 +524,12 @@ fn insert_vertex_dataset_uris(
         .clone()
         .or_else(|| training_dataset.vertex_dataset_resource.clone())
     {
-        spec.insert("trainingDatasetUri".to_string(), Value::String(uri));
+        let key = if matches!(method, TuningMethod::Distillation) {
+            "promptDatasetUri"
+        } else {
+            "trainingDatasetUri"
+        };
+        spec.insert(key.to_string(), Value::String(uri));
     }
 
     if let Some(validation_dataset) = &config.validation_dataset {
@@ -498,6 +564,16 @@ fn insert_vertex_hyper_params(
             serde_json::to_value(adapter_size)?,
         );
     }
+    if matches!(method, TuningMethod::SupervisedFineTuning) {
+        if let Some(batch_size) = config.batch_size {
+            hyper.insert("batchSize".to_string(), Value::Number(batch_size.into()));
+        }
+        if let Some(learning_rate) = config.learning_rate {
+            if let Some(value) = serde_json::Number::from_f64(f64::from(learning_rate)) {
+                hyper.insert("learningRate".to_string(), Value::Number(value));
+            }
+        }
+    }
     if let Some(beta) = config.beta {
         if let Some(value) = serde_json::Number::from_f64(f64::from(beta)) {
             if matches!(method, TuningMethod::PreferenceTuning) {
@@ -519,6 +595,26 @@ fn insert_vertex_hyper_params(
         spec.insert("hyperParameters".to_string(), Value::Object(hyper));
     }
     Ok(())
+}
+
+fn ensure_object_in_parent<'a>(
+    parent: &'a mut Map<String, Value>,
+    key: &str,
+) -> &'a mut Map<String, Value> {
+    use serde_json::map::Entry;
+
+    match parent.entry(key.to_string()) {
+        Entry::Occupied(mut entry) => {
+            if !entry.get().is_object() {
+                entry.insert(Value::Object(Map::new()));
+            }
+            entry.into_mut().as_object_mut().expect("object")
+        }
+        Entry::Vacant(entry) => entry
+            .insert(Value::Object(Map::new()))
+            .as_object_mut()
+            .expect("object"),
+    }
 }
 
 fn parse_tuning_job_from_mldev(value: &Value) -> Result<TuningJob> {
@@ -581,7 +677,9 @@ fn parse_tuning_job_from_mldev(value: &Value) -> Result<TuningJob> {
         pre_tuned_model: None,
         supervised_tuning_spec: None,
         preference_optimization_spec: None,
+        distillation_spec: None,
         tuning_data_stats: None,
+        distillation_data_stats: None,
         encryption_spec: None,
         partner_model_tuning_spec: None,
         evaluation_config: None,
@@ -884,6 +982,18 @@ mod tests {
         assert!(validate_mldev_config(&config).is_err());
 
         let config = CreateTuningJobConfig {
+            tuning_mode: Some(rust_genai_types::enums::TuningMode::TuningModeFull),
+            ..Default::default()
+        };
+        assert!(validate_mldev_config(&config).is_err());
+
+        let config = CreateTuningJobConfig {
+            custom_base_model: Some("gs://custom".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_mldev_config(&config).is_err());
+
+        let config = CreateTuningJobConfig {
             evaluation_config: Some(rust_genai_types::tunings::EvaluationConfig {
                 metrics: Some(vec![json!({"name": "metric"})]),
                 ..Default::default()
@@ -912,6 +1022,30 @@ mod tests {
         };
         assert!(validate_mldev_config(&config).is_err());
 
+        let config = CreateTuningJobConfig {
+            base_teacher_model: Some("teacher".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_mldev_config(&config).is_err());
+
+        let config = CreateTuningJobConfig {
+            tuned_teacher_model_source: Some("tuned".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_mldev_config(&config).is_err());
+
+        let config = CreateTuningJobConfig {
+            sft_loss_weight_multiplier: Some(0.7),
+            ..Default::default()
+        };
+        assert!(validate_mldev_config(&config).is_err());
+
+        let config = CreateTuningJobConfig {
+            output_uri: Some("gs://out".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_mldev_config(&config).is_err());
+
         let inner = test_client_inner(Backend::GeminiApi);
         let dataset = TuningDataset {
             gcs_uri: Some("gs://train".to_string()),
@@ -932,12 +1066,22 @@ mod tests {
         let inner = test_client_inner(Backend::VertexAi);
         let config = CreateTuningJobConfig {
             batch_size: Some(8),
+            learning_rate: Some(0.001),
             ..Default::default()
         };
-        let err =
+        let body =
             build_tune_body_vertex(&inner, "gemini-1.5-pro", &TuningDataset::default(), &config)
-                .unwrap_err();
-        assert!(matches!(err, Error::InvalidConfig { .. }));
+                .unwrap();
+        let spec = body
+            .get("supervisedTuningSpec")
+            .and_then(Value::as_object)
+            .unwrap();
+        let hyper = spec
+            .get("hyperParameters")
+            .and_then(Value::as_object)
+            .unwrap();
+        assert_eq!(hyper.get("batchSize").and_then(Value::as_i64), Some(8));
+        assert!(hyper.get("learningRate").is_some());
 
         let dataset = TuningDataset {
             gcs_uri: Some("gs://train".to_string()),
@@ -957,6 +1101,35 @@ mod tests {
             build_tune_body_vertex(&inner, "projects/p/models/m", &dataset, &config).unwrap();
         assert!(body.get("preTunedModel").is_some());
         assert!(body.get("preferenceOptimizationSpec").is_some());
+
+        let dataset = TuningDataset {
+            gcs_uri: Some("gs://prompt".to_string()),
+            ..Default::default()
+        };
+        let config = CreateTuningJobConfig {
+            method: Some(TuningMethod::Distillation),
+            base_teacher_model: Some("teacher".to_string()),
+            tuned_teacher_model_source: Some(
+                "projects/p/locations/l/models/tunedTeacher".to_string(),
+            ),
+            sft_loss_weight_multiplier: Some(0.7),
+            output_uri: Some("gs://out".to_string()),
+            ..Default::default()
+        };
+        let body = build_tune_body_vertex(&inner, "gemini-1.5-pro", &dataset, &config).unwrap();
+        let spec = body
+            .get("distillationSpec")
+            .and_then(Value::as_object)
+            .unwrap();
+        assert_eq!(
+            spec.get("promptDatasetUri").and_then(Value::as_str),
+            Some("gs://prompt")
+        );
+        assert_eq!(
+            spec.get("baseTeacherModel").and_then(Value::as_str),
+            Some("teacher")
+        );
+        assert!(body.get("outputUri").is_some());
     }
 
     #[test]
@@ -1257,10 +1430,11 @@ mod tests {
         };
         let config = CreateTuningJobConfig {
             learning_rate: Some(0.1),
+            batch_size: Some(2),
             ..Default::default()
         };
-        let err = build_tune_body_vertex(&inner, "gemini-1.5-pro", &dataset, &config).unwrap_err();
-        assert!(matches!(err, Error::InvalidConfig { .. }));
+        let body = build_tune_body_vertex(&inner, "gemini-1.5-pro", &dataset, &config).unwrap();
+        assert!(body.get("supervisedTuningSpec").is_some());
 
         let dataset_with_examples = TuningDataset {
             examples: Some(vec![TuningExample {

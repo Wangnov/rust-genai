@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Files: support `files:register` (register GCS URIs) for Gemini Developer API with OAuth/ADC.
 - Models: `model_armor_config` support in `GenerateContentConfig` (Vertex AI only).
 - Tunings: `encryption_spec` support in tuning job creation config (Vertex AI only).
+- Tunings: add distillation method + Vertex OSS tuning fields (`tuning_mode`, `custom_base_model`, `output_uri`, teacher model options).
 - Batches: `metadata` field in inlined responses.
 - Tokenizer: add `gemini-3-pro-preview` local tokenizer mapping.
 - Interactions: support `include_input` (and related query params) on Get Interaction.

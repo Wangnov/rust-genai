@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::enums::{AdapterSize, JobState, TuningMethod};
+use crate::enums::{AdapterSize, JobState, TuningMethod, TuningMode};
 use crate::http::HttpOptions;
 
 /// Tuning job state alias.
@@ -87,6 +87,12 @@ pub struct CreateTuningJobConfig {
     pub pre_tuned_model_checkpoint_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_size: Option<AdapterSize>,
+    /// Optional. Tuning mode for SFT tuning (Vertex AI only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tuning_mode: Option<TuningMode>,
+    /// Optional. Custom base model for tuning (Vertex AI OSS models only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_base_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,6 +106,18 @@ pub struct CreateTuningJobConfig {
     pub labels: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub beta: Option<f32>,
+    /// Optional. The base teacher model that is being distilled (Distillation only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_teacher_model: Option<String>,
+    /// Optional. The resource name of the tuned teacher model (Distillation only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tuned_teacher_model_source: Option<String>,
+    /// Optional. Multiplier for adjusting the weight of the SFT loss (Distillation only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sft_loss_weight_multiplier: Option<f32>,
+    /// Optional. The Cloud Storage location where the tuning job outputs are written (Vertex AI only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_uri: Option<String>,
 }
 
 /// Configuration for the list tuning jobs method.
@@ -213,7 +231,11 @@ pub struct TuningJob {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preference_optimization_spec: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub distillation_spec: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tuning_data_stats: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distillation_data_stats: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encryption_spec: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
