@@ -9,8 +9,10 @@ use crate::enums::{
     VideoCompressionQuality, VideoGenerationMaskMode, VideoGenerationReferenceType,
 };
 use crate::http::{HttpOptions, HttpResponse};
+use crate::operations::OperationError;
 use crate::tool::{Tool, ToolConfig};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// `GenerateContent` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -793,4 +795,20 @@ pub struct GenerateVideosResponse {
     pub rai_media_filtered_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rai_media_filtered_reasons: Option<Vec<String>>,
+}
+
+/// 视频生成操作（LRO）。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateVideosOperation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub done: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<OperationError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<GenerateVideosResponse>,
 }
