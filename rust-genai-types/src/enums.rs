@@ -409,6 +409,15 @@ pub enum FinishReason {
     Language,
     Other,
     Blocklist,
+    ProhibitedContent,
+    Spii,
+    MalformedFunctionCall,
+    ImageSafety,
+    UnexpectedToolCall,
+    ImageProhibitedContent,
+    NoImage,
+    ImageRecitation,
+    ImageOther,
 }
 
 /// Thinking level for thinking models.
