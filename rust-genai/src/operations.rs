@@ -44,6 +44,22 @@ impl Operations {
     ) -> Result<Operation> {
         let http_options = config.http_options.take();
         let name = normalize_operation_name(&self.inner, name.as_ref())?;
+
+        // Vertex AI predictLongRunning operations are fetched via `:fetchPredictOperation`
+        // on the model resource (not via GET on the operation name).
+        if self.inner.config.backend == Backend::VertexAi {
+            let resource_name = name
+                .rsplit_once("/operations/")
+                .map(|(resource, _)| resource)
+                .filter(|resource| resource.contains("/models/"));
+            if let Some(resource_name) = resource_name {
+                let value = self
+                    .fetch_predict_operation_value(&name, resource_name, http_options.as_ref())
+                    .await?;
+                return Ok(serde_json::from_value(value)?);
+            }
+        }
+
         let url = build_operation_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
