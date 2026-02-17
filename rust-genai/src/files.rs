@@ -15,8 +15,8 @@ use crate::upload;
 use crate::upload::CHUNK_SIZE;
 use rust_genai_types::enums::FileState;
 use rust_genai_types::files::{
-    DeleteFileResponse, DownloadFileConfig, File, ListFilesConfig, ListFilesResponse,
-    RegisterFilesConfig, RegisterFilesResponse, UploadFileConfig,
+    DeleteFileConfig, DeleteFileResponse, DownloadFileConfig, File, GetFileConfig, ListFilesConfig,
+    ListFilesResponse, RegisterFilesConfig, RegisterFilesResponse, UploadFileConfig,
 };
 use serde_json::Value;
 
@@ -49,10 +49,11 @@ impl Files {
     pub async fn upload_with_config(
         &self,
         data: Vec<u8>,
-        config: UploadFileConfig,
+        mut config: UploadFileConfig,
     ) -> Result<File> {
         ensure_gemini_backend(&self.inner)?;
 
+        let http_options = config.http_options.take();
         let mime_type = config
             .mime_type
             .clone()
@@ -62,9 +63,10 @@ impl Files {
         let size_bytes = data.len() as u64;
         let file = build_upload_file(config, size_bytes, &mime_type);
         let upload_url = self
-            .start_resumable_upload(file, size_bytes, &mime_type, None)
+            .start_resumable_upload(file, size_bytes, &mime_type, None, http_options.as_ref())
             .await?;
-        self.upload_bytes(&upload_url, &data).await
+        self.upload_bytes(&upload_url, &data, http_options.as_ref())
+            .await
     }
 
     /// 从文件路径上传。
@@ -95,6 +97,7 @@ impl Files {
             });
         }
 
+        let http_options = config.http_options.take();
         let size_bytes = metadata.len();
         let mime_type = config.mime_type.take().unwrap_or_else(|| {
             mime_guess::from_path(path)
@@ -106,10 +109,16 @@ impl Files {
         let file_name = path.file_name().and_then(|name| name.to_str());
         let file = build_upload_file(config, size_bytes, &mime_type);
         let upload_url = self
-            .start_resumable_upload(file, size_bytes, &mime_type, file_name)
+            .start_resumable_upload(
+                file,
+                size_bytes,
+                &mime_type,
+                file_name,
+                http_options.as_ref(),
+            )
             .await?;
         let mut file_handle = tokio::fs::File::open(path).await?;
-        self.upload_reader(&upload_url, &mut file_handle, size_bytes)
+        self.upload_reader(&upload_url, &mut file_handle, size_bytes, http_options.as_ref())
             .await
     }
 
@@ -118,12 +127,30 @@ impl Files {
     /// # Errors
     /// 当请求失败或响应解析失败时返回错误。
     pub async fn download(&self, name_or_uri: impl AsRef<str>) -> Result<Vec<u8>> {
+        self.download_with_config(name_or_uri, DownloadFileConfig::default())
+            .await
+    }
+
+    /// 下载文件（自定义配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
+    pub async fn download_with_config(
+        &self,
+        name_or_uri: impl AsRef<str>,
+        mut config: DownloadFileConfig,
+    ) -> Result<Vec<u8>> {
         ensure_gemini_backend(&self.inner)?;
 
+        let http_options = config.http_options.take();
         let file_name = normalize_file_name(name_or_uri.as_ref())?;
-        let url = build_file_download_url(&self.inner, &file_name);
-        let request = self.inner.http.get(url);
-        let response = self.inner.send(request).await?;
+        let url = build_file_download_url(&self.inner, &file_name, http_options.as_ref());
+        let mut request = self.inner.http.get(url);
+        request = apply_http_options(request, http_options.as_ref())?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -132,19 +159,6 @@ impl Files {
         }
         let bytes = response.bytes().await?;
         Ok(bytes.to_vec())
-    }
-
-    #[allow(unused_variables)]
-    /// 下载文件（自定义配置）。
-    ///
-    /// # Errors
-    /// 当请求失败或响应解析失败时返回错误。
-    pub async fn download_with_config(
-        &self,
-        name_or_uri: impl AsRef<str>,
-        _config: DownloadFileConfig,
-    ) -> Result<Vec<u8>> {
-        self.download(name_or_uri).await
     }
 
     /// 列出文件。
@@ -161,9 +175,14 @@ impl Files {
     /// 当请求失败或响应解析失败时返回错误。
     pub async fn list_with_config(&self, config: ListFilesConfig) -> Result<ListFilesResponse> {
         ensure_gemini_backend(&self.inner)?;
-        let url = build_files_list_url(&self.inner, &config)?;
-        let request = self.inner.http.get(url);
-        let response = self.inner.send(request).await?;
+        let http_options = config.http_options.as_ref();
+        let url = build_files_list_url(&self.inner, &config, http_options)?;
+        let mut request = self.inner.http.get(url);
+        request = apply_http_options(request, http_options)?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options)
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -210,12 +229,30 @@ impl Files {
     /// # Errors
     /// 当请求失败或响应解析失败时返回错误。
     pub async fn get(&self, name_or_uri: impl AsRef<str>) -> Result<File> {
+        self.get_with_config(name_or_uri, GetFileConfig::default())
+            .await
+    }
+
+    /// 获取文件元数据（自定义配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
+    pub async fn get_with_config(
+        &self,
+        name_or_uri: impl AsRef<str>,
+        mut config: GetFileConfig,
+    ) -> Result<File> {
         ensure_gemini_backend(&self.inner)?;
 
+        let http_options = config.http_options.take();
         let file_name = normalize_file_name(name_or_uri.as_ref())?;
-        let url = build_file_url(&self.inner, &file_name);
-        let request = self.inner.http.get(url);
-        let response = self.inner.send(request).await?;
+        let url = build_file_url(&self.inner, &file_name, http_options.as_ref());
+        let mut request = self.inner.http.get(url);
+        request = apply_http_options(request, http_options.as_ref())?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -230,12 +267,30 @@ impl Files {
     /// # Errors
     /// 当请求失败或响应解析失败时返回错误。
     pub async fn delete(&self, name_or_uri: impl AsRef<str>) -> Result<DeleteFileResponse> {
+        self.delete_with_config(name_or_uri, DeleteFileConfig::default())
+            .await
+    }
+
+    /// 删除文件（自定义配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或响应解析失败时返回错误。
+    pub async fn delete_with_config(
+        &self,
+        name_or_uri: impl AsRef<str>,
+        mut config: DeleteFileConfig,
+    ) -> Result<DeleteFileResponse> {
         ensure_gemini_backend(&self.inner)?;
 
+        let http_options = config.http_options.take();
         let file_name = normalize_file_name(name_or_uri.as_ref())?;
-        let url = build_file_url(&self.inner, &file_name);
-        let request = self.inner.http.delete(url);
-        let response = self.inner.send(request).await?;
+        let url = build_file_url(&self.inner, &file_name, http_options.as_ref());
+        let mut request = self.inner.http.delete(url);
+        request = apply_http_options(request, http_options.as_ref())?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -364,12 +419,10 @@ impl Files {
         size_bytes: u64,
         mime_type: &str,
         file_name: Option<&str>,
+        http_options: Option<&rust_genai_types::http::HttpOptions>,
     ) -> Result<String> {
-        let url = build_files_upload_url(&self.inner);
-        let mut request = self
-            .inner
-            .http
-            .post(url)
+        let url = build_files_upload_url(&self.inner, http_options);
+        let mut request = self.inner.http.post(url)
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
             .header(
@@ -384,7 +437,10 @@ impl Files {
 
         let body = serde_json::json!({ "file": file });
         let request = request.json(&body);
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options)
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -403,7 +459,12 @@ impl Files {
         Ok(upload_url.to_string())
     }
 
-    async fn upload_bytes(&self, upload_url: &str, data: &[u8]) -> Result<File> {
+    async fn upload_bytes(
+        &self,
+        upload_url: &str,
+        data: &[u8],
+        http_options: Option<&rust_genai_types::http::HttpOptions>,
+    ) -> Result<File> {
         let validate_status = |status: &str| {
             if status != "active" {
                 return Err(Error::Parse {
@@ -415,7 +476,9 @@ impl Files {
 
         upload::upload_bytes_with(
             data,
-            |chunk, offset, finalize| self.send_upload_chunk(upload_url, chunk, offset, finalize),
+            |chunk, offset, finalize| {
+                self.send_upload_chunk(upload_url, chunk, offset, finalize, http_options)
+            },
             validate_status,
             "Upload finished without final response",
         )
@@ -427,6 +490,7 @@ impl Files {
         upload_url: &str,
         reader: &mut tokio::fs::File,
         total_size: u64,
+        http_options: Option<&rust_genai_types::http::HttpOptions>,
     ) -> Result<File> {
         let validate_status = |status: &str| {
             if status != "active" {
@@ -440,7 +504,9 @@ impl Files {
         upload::upload_reader_with(
             reader,
             total_size,
-            |chunk, offset, finalize| self.send_upload_chunk(upload_url, chunk, offset, finalize),
+            |chunk, offset, finalize| {
+                self.send_upload_chunk(upload_url, chunk, offset, finalize, http_options)
+            },
             validate_status,
             "Upload finished without final response",
         )
@@ -453,6 +519,7 @@ impl Files {
         chunk: Vec<u8>,
         offset: u64,
         finalize: bool,
+        http_options: Option<&rust_genai_types::http::HttpOptions>,
     ) -> Result<(String, Option<File>)> {
         let command = if finalize {
             "upload, finalize"
@@ -460,15 +527,17 @@ impl Files {
             "upload"
         };
         let chunk_len = chunk.len();
-        let response = self
-            .inner
-            .http
-            .post(upload_url)
+        let mut request = self.inner.http.post(upload_url);
+        request = apply_http_options(request, http_options)?;
+        let request = request
             .header("X-Goog-Upload-Command", command)
             .header("X-Goog-Upload-Offset", offset.to_string())
             .header("Content-Length", chunk_len.to_string())
-            .body(chunk)
-            .send()
+            .body(chunk);
+
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options)
             .await?;
 
         if !response.status().is_success() {
@@ -572,15 +641,30 @@ fn normalize_file_name(value: &str) -> Result<String> {
     }
 }
 
-fn build_files_upload_url(inner: &ClientInner) -> String {
-    let base = &inner.api_client.base_url;
-    let version = &inner.api_client.api_version;
+fn build_files_upload_url(
+    inner: &ClientInner,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> String {
+    let base = http_options
+        .and_then(|opts| opts.base_url.as_deref())
+        .unwrap_or(&inner.api_client.base_url);
+    let version = http_options
+        .and_then(|opts| opts.api_version.as_deref())
+        .unwrap_or(&inner.api_client.api_version);
     format!("{base}upload/{version}/files")
 }
 
-fn build_files_list_url(inner: &ClientInner, config: &ListFilesConfig) -> Result<String> {
-    let base = &inner.api_client.base_url;
-    let version = &inner.api_client.api_version;
+fn build_files_list_url(
+    inner: &ClientInner,
+    config: &ListFilesConfig,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> Result<String> {
+    let base = http_options
+        .and_then(|opts| opts.base_url.as_deref())
+        .unwrap_or(&inner.api_client.base_url);
+    let version = http_options
+        .and_then(|opts| opts.api_version.as_deref())
+        .unwrap_or(&inner.api_client.api_version);
     let url = format!("{base}{version}/files");
     add_list_query_params(&url, config)
 }
@@ -598,15 +682,31 @@ fn build_files_register_url(
     format!("{base}{version}/files:register")
 }
 
-fn build_file_url(inner: &ClientInner, name: &str) -> String {
-    let base = &inner.api_client.base_url;
-    let version = &inner.api_client.api_version;
+fn build_file_url(
+    inner: &ClientInner,
+    name: &str,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> String {
+    let base = http_options
+        .and_then(|opts| opts.base_url.as_deref())
+        .unwrap_or(&inner.api_client.base_url);
+    let version = http_options
+        .and_then(|opts| opts.api_version.as_deref())
+        .unwrap_or(&inner.api_client.api_version);
     format!("{base}{version}/files/{name}")
 }
 
-fn build_file_download_url(inner: &ClientInner, name: &str) -> String {
-    let base = &inner.api_client.base_url;
-    let version = &inner.api_client.api_version;
+fn build_file_download_url(
+    inner: &ClientInner,
+    name: &str,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> String {
+    let base = http_options
+        .and_then(|opts| opts.base_url.as_deref())
+        .unwrap_or(&inner.api_client.base_url);
+    let version = http_options
+        .and_then(|opts| opts.api_version.as_deref())
+        .unwrap_or(&inner.api_client.api_version);
     format!("{base}{version}/files/{name}:download?alt=media")
 }
 
@@ -673,7 +773,7 @@ mod tests {
     fn test_build_urls() {
         let client = Client::new("test-key").unwrap();
         let files = client.files();
-        let url = build_files_upload_url(&files.inner);
+        let url = build_files_upload_url(&files.inner, None);
         assert_eq!(
             url,
             "https://generativelanguage.googleapis.com/upload/v1beta/files"
@@ -695,6 +795,7 @@ mod tests {
         let url = add_list_query_params(
             "https://example.com/files",
             &ListFilesConfig {
+                http_options: None,
                 page_size: Some(3),
                 page_token: Some("t".to_string()),
             },
@@ -748,7 +849,7 @@ mod tests {
         let files = client.files();
         let file = build_upload_file(UploadFileConfig::default(), 1, "text/plain");
         let err = files
-            .start_resumable_upload(file, 1, "text/plain", None)
+            .start_resumable_upload(file, 1, "text/plain", None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
@@ -764,6 +865,7 @@ mod tests {
                 Vec::new(),
                 0,
                 true,
+                None,
             )
             .await
             .unwrap_err();
@@ -780,6 +882,7 @@ mod tests {
                 Vec::new(),
                 0,
                 true,
+                None,
             )
             .await
             .unwrap_err();
@@ -824,7 +927,7 @@ mod tests {
         let files = client.files();
         let file = build_upload_file(UploadFileConfig::default(), 1, "text/plain");
         let err = files
-            .start_resumable_upload(file, 1, "text/plain", None)
+            .start_resumable_upload(file, 1, "text/plain", None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::ApiError { .. }));
@@ -862,14 +965,14 @@ mod tests {
         let files = client.files();
 
         let file = files
-            .upload_bytes(&format!("{}/upload-empty", server.uri()), &[])
+            .upload_bytes(&format!("{}/upload-empty", server.uri()), &[], None)
             .await
             .unwrap();
         assert_eq!(file.name.as_deref(), Some("files/empty"));
 
         let data = vec![0u8; CHUNK_SIZE + 1];
         let err = files
-            .upload_bytes(&format!("{}/upload-bad", server.uri()), &data)
+            .upload_bytes(&format!("{}/upload-bad", server.uri()), &data, None)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
@@ -905,6 +1008,7 @@ mod tests {
                 &format!("{}/upload-empty-file", server.uri()),
                 &mut handle,
                 0,
+                None,
             )
             .await
             .unwrap();
@@ -951,7 +1055,7 @@ mod tests {
         let files = client.files();
         let data = vec![0u8; CHUNK_SIZE + 1];
         let file = files
-            .upload_bytes(&format!("{}/upload-active", server.uri()), &data)
+            .upload_bytes(&format!("{}/upload-active", server.uri()), &data, None)
             .await
             .unwrap();
         assert_eq!(file.name.as_deref(), Some("files/final"));
@@ -969,6 +1073,7 @@ mod tests {
                 &format!("{}/upload-reader", server.uri()),
                 &mut handle,
                 (CHUNK_SIZE + 1) as u64,
+                None,
             )
             .await
             .unwrap();

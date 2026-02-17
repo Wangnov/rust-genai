@@ -53,6 +53,9 @@ pub struct File {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFilesConfig {
+    /// Optional. HTTP request overrides (SDK only, not sent to API).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_size: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +79,9 @@ pub struct ListFilesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadFileConfig {
+    /// Optional. HTTP request overrides (SDK only, not sent to API).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -87,7 +93,29 @@ pub struct UploadFileConfig {
 /// Download file configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct DownloadFileConfig {}
+pub struct DownloadFileConfig {
+    /// Optional. HTTP request overrides (SDK only, not sent to API).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
+}
+
+/// Get file request configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GetFileConfig {
+    /// Optional. HTTP request overrides (SDK only, not sent to API).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
+}
+
+/// Delete file request configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFileConfig {
+    /// Optional. HTTP request overrides (SDK only, not sent to API).
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
+}
 
 /// Register files configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
