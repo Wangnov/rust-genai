@@ -28,6 +28,11 @@ async fn batches_error_responses() {
         .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
         .mount(&server)
         .await;
+    Mock::given(method("POST"))
+        .and(path("/v1beta/batches/bad:cancel"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&server)
+        .await;
     Mock::given(method("DELETE"))
         .and(path("/v1beta/batches/bad"))
         .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
@@ -57,6 +62,9 @@ async fn batches_error_responses() {
     assert!(matches!(err, rust_genai::Error::ApiError { .. }));
 
     let err = batches.list().await.unwrap_err();
+    assert!(matches!(err, rust_genai::Error::ApiError { .. }));
+
+    let err = batches.cancel("bad").await.unwrap_err();
     assert!(matches!(err, rust_genai::Error::ApiError { .. }));
 
     let err = batches.delete("bad").await.unwrap_err();
@@ -92,6 +100,12 @@ async fn batches_api_flow() {
     Mock::given(method("GET"))
         .and(path("/v1beta/batches/missing"))
         .respond_with(ResponseTemplate::new(404).set_body_string("missing"))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/batches/1:cancel"))
+        .respond_with(ResponseTemplate::new(200))
         .mount(&server)
         .await;
 
@@ -143,6 +157,8 @@ async fn batches_api_flow() {
 
     let err = batches.get("missing").await.unwrap_err();
     assert!(matches!(err, rust_genai::Error::ApiError { .. }));
+
+    batches.cancel("1").await.unwrap();
 
     batches.delete("1").await.unwrap();
 

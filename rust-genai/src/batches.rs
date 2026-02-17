@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::batches::{
-    BatchJob, BatchJobDestination, BatchJobSource, CreateBatchJobConfig, DeleteBatchJobConfig,
-    DeleteResourceJob, GetBatchJobConfig, InlinedRequest, ListBatchJobsConfig, ListBatchJobsResponse,
+    BatchJob, BatchJobDestination, BatchJobSource, CancelBatchJobConfig, CreateBatchJobConfig,
+    DeleteBatchJobConfig, DeleteResourceJob, GetBatchJobConfig, InlinedRequest, ListBatchJobsConfig,
+    ListBatchJobsResponse,
 };
 use rust_genai_types::enums::JobState;
 use serde_json::{json, Map, Value};
@@ -142,6 +143,43 @@ impl Batches {
         };
         result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
+    }
+
+    /// 取消批处理任务。
+    ///
+    /// # Errors
+    /// 当请求失败或服务端返回错误时返回错误。
+    pub async fn cancel(&self, name: impl AsRef<str>) -> Result<()> {
+        self.cancel_with_config(name, CancelBatchJobConfig::default())
+            .await
+    }
+
+    /// 取消批处理任务（带配置）。
+    ///
+    /// # Errors
+    /// 当请求失败或服务端返回错误时返回错误。
+    pub async fn cancel_with_config(
+        &self,
+        name: impl AsRef<str>,
+        mut config: CancelBatchJobConfig,
+    ) -> Result<()> {
+        let http_options = config.http_options.take();
+        let name = normalize_batch_job_name(&self.inner, name.as_ref())?;
+        let url = build_batch_job_cancel_url(&self.inner, &name, http_options.as_ref());
+        let mut request = self.inner.http.post(url).json(&json!({}));
+        request = apply_http_options(request, http_options.as_ref())?;
+
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
+        if !response.status().is_success() {
+            return Err(Error::ApiError {
+                status: response.status().as_u16(),
+                message: response.text().await.unwrap_or_default(),
+            });
+        }
+        Ok(())
     }
 
     /// 列出批处理任务。
@@ -320,6 +358,17 @@ fn build_batch_job_url(
         .and_then(|opts| opts.api_version.as_deref())
         .unwrap_or(&inner.api_client.api_version);
     format!("{base}{version}/{name}")
+}
+
+fn build_batch_job_cancel_url(
+    inner: &ClientInner,
+    name: &str,
+    http_options: Option<&rust_genai_types::http::HttpOptions>,
+) -> String {
+    format!(
+        "{}:cancel",
+        build_batch_job_url(inner, name, http_options)
+    )
 }
 
 fn build_batch_list_url(
@@ -1210,6 +1259,14 @@ mod tests {
             .mount(&server)
             .await;
 
+        Mock::given(method("POST"))
+            .and(path(
+                "/v1beta1/projects/proj/locations/loc/batchPredictionJobs/1:cancel",
+            ))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
         let inner = test_client_inner_with_base(Backend::VertexAi, &server.uri(), "v1beta1");
         let batches = Batches::new(Arc::new(inner));
 
@@ -1244,6 +1301,8 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("batchPredictionJobs/1"));
+
+        batches.cancel("1").await.unwrap();
 
         batches.delete("1").await.unwrap();
     }

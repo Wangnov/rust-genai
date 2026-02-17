@@ -185,6 +185,14 @@ pub struct GetBatchJobConfig {
     pub http_options: Option<HttpOptions>,
 }
 
+/// 取消批处理任务配置。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelBatchJobConfig {
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
+}
+
 /// 删除批处理任务配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
