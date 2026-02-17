@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::documents::CustomMetadata;
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
 
 /// Optional parameters for creating a file search store.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -77,6 +77,9 @@ pub struct ListFileSearchStoresConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFileSearchStoresResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

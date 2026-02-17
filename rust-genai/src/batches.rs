@@ -13,6 +13,7 @@ use serde_json::{json, Map, Value};
 
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 
 #[derive(Clone)]
 pub struct Batches {
@@ -167,8 +168,11 @@ impl Batches {
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        parse_batch_job_list_response(&self.inner, &value)
+        let mut result = parse_batch_job_list_response(&self.inner, &value)?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有批处理任务（自动翻页）。

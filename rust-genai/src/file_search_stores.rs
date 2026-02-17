@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::client::{Backend, ClientInner};
 use crate::documents::Documents;
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 use crate::upload;
 #[cfg(test)]
 use crate::upload::CHUNK_SIZE;
@@ -174,7 +175,10 @@ impl FileSearchStores {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<ListFileSearchStoresResponse>().await?)
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListFileSearchStoresResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有 `FileSearchStore`（自动翻页）。

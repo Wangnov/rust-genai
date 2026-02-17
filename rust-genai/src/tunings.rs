@@ -13,6 +13,7 @@ use serde_json::{json, Map, Value};
 
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 
 #[derive(Clone)]
 pub struct Tunings {
@@ -166,11 +167,14 @@ impl Tunings {
             });
         }
 
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        match self.inner.config.backend {
-            Backend::GeminiApi => parse_list_tuning_jobs_from_mldev(&value),
-            Backend::VertexAi => Ok(serde_json::from_value(value)?),
-        }
+        let mut result = match self.inner.config.backend {
+            Backend::GeminiApi => parse_list_tuning_jobs_from_mldev(&value)?,
+            Backend::VertexAi => serde_json::from_value(value)?,
+        };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有调优任务（自动翻页）。
@@ -725,6 +729,7 @@ fn parse_list_tuning_jobs_from_mldev(value: &Value) -> Result<ListTuningJobsResp
         _ => None,
     };
     Ok(ListTuningJobsResponse {
+        sdk_http_response: None,
         tuning_jobs,
         next_page_token,
     })

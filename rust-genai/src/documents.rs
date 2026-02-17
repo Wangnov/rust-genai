@@ -10,6 +10,7 @@ use rust_genai_types::documents::{
 
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 
 #[derive(Clone)]
 pub struct Documents {
@@ -134,7 +135,10 @@ impl Documents {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<ListDocumentsResponse>().await?)
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListDocumentsResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有 Documents（自动翻页）。

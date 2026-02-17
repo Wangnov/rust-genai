@@ -12,6 +12,7 @@ use serde_json::{json, Map, Value};
 
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 
 #[derive(Clone)]
 pub struct Caches {
@@ -204,7 +205,10 @@ impl Caches {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<ListCachedContentsResponse>().await?)
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListCachedContentsResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有缓存（自动翻页）。

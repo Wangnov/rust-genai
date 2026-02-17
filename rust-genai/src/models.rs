@@ -25,6 +25,7 @@ use crate::afc::{
 };
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 use crate::model_capabilities::{
     validate_code_execution_image_inputs, validate_function_response_media,
 };
@@ -74,6 +75,7 @@ fn build_synthetic_afc_response(
     history: &[Content],
 ) -> GenerateContentResponse {
     let mut response = GenerateContentResponse {
+        sdk_http_response: None,
         candidates: vec![rust_genai_types::response::Candidate {
             content: Some(response_content),
             citation_metadata: None,
@@ -291,11 +293,13 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        let result = match backend {
+        let mut result = match backend {
             Backend::GeminiApi => converters::generate_content_response_from_mldev(value)?,
             Backend::VertexAi => converters::generate_content_response_from_vertex(value)?,
         };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -508,7 +512,15 @@ impl Models {
             });
         }
 
-        Ok(Box::pin(parse_sse_stream(response)))
+        let headers = response.headers().clone();
+        let sdk_http_response = sdk_http_response_from_headers(&headers);
+        let stream = parse_sse_stream(response).map(move |item| {
+            item.map(|mut resp| {
+                resp.sdk_http_response = Some(sdk_http_response.clone());
+                resp
+            })
+        });
+        Ok(Box::pin(stream))
     }
 
     /// 生成嵌入向量（默认配置）。
@@ -558,11 +570,18 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         match self.inner.config.backend {
-            Backend::GeminiApi => Ok(response.json::<EmbedContentResponse>().await?),
+            Backend::GeminiApi => {
+                let mut result = response.json::<EmbedContentResponse>().await?;
+                result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+                Ok(result)
+            }
             Backend::VertexAi => {
                 let value = response.json::<Value>().await?;
-                Ok(convert_vertex_embed_response(&value)?)
+                let mut result = convert_vertex_embed_response(&value)?;
+                result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+                Ok(result)
             }
         }
     }
@@ -613,11 +632,13 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        let result = match backend {
+        let mut result = match backend {
             Backend::GeminiApi => converters::count_tokens_response_from_mldev(value)?,
             Backend::VertexAi => converters::count_tokens_response_from_vertex(value)?,
         };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -672,8 +693,10 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        let result = converters::compute_tokens_response_from_vertex(value)?;
+        let mut result = converters::compute_tokens_response_from_vertex(value)?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -685,6 +708,7 @@ impl Models {
     ) -> CountTokensResponse {
         let total = i32::try_from(estimator.estimate_tokens(contents)).unwrap_or(i32::MAX);
         CountTokensResponse {
+            sdk_http_response: None,
             total_tokens: Some(total),
             cached_content_token_count: None,
         }
@@ -701,6 +725,7 @@ impl Models {
         let total =
             i32::try_from(estimator.estimate_tokens(&estimation_contents)).unwrap_or(i32::MAX);
         CountTokensResponse {
+            sdk_http_response: None,
             total_tokens: Some(total),
             cached_content_token_count: None,
         }
@@ -758,8 +783,11 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        Ok(parse_generate_images_response(&value))
+        let mut result = parse_generate_images_response(&value);
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 编辑图像（仅 Vertex AI）。
@@ -803,8 +831,11 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        Ok(parse_edit_image_response(&value))
+        let mut result = parse_edit_image_response(&value);
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 放大图像（仅 Vertex AI）。
@@ -848,8 +879,11 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        Ok(parse_upscale_image_response(&value))
+        let mut result = parse_upscale_image_response(&value);
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// Recontext 图像（Vertex AI）。
@@ -1017,7 +1051,9 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        let result = response.json::<ListModelsResponse>().await?;
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListModelsResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -1132,13 +1168,15 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         if response.content_length().unwrap_or(0) == 0 {
-            return Ok(DeleteModelResponse::default());
+            let mut resp = DeleteModelResponse::default();
+            resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+            return Ok(resp);
         }
-        Ok(response
-            .json::<DeleteModelResponse>()
-            .await
-            .unwrap_or_default())
+        let mut resp = response.json::<DeleteModelResponse>().await.unwrap_or_default();
+        resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(resp)
     }
 }
 

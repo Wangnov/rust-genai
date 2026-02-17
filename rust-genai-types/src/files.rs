@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{FileSource, FileState};
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
 
 /// Status of a file that failed to process.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -63,6 +63,9 @@ pub struct ListFilesConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListFilesResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,6 +102,9 @@ pub struct RegisterFilesConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RegisterFilesResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     /// The registered files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<File>>,

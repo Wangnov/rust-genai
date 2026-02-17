@@ -29,6 +29,7 @@ pub(super) fn convert_vertex_embed_response(value: &Value) -> Result<EmbedConten
         .transpose()?;
 
     Ok(EmbedContentResponse {
+        sdk_http_response: None,
         embeddings: Some(embeddings),
         metadata,
     })
@@ -51,6 +52,7 @@ pub(super) fn parse_generate_images_response(value: &Value) -> GenerateImagesRes
         .and_then(parse_safety_attributes);
 
     GenerateImagesResponse {
+        sdk_http_response: None,
         generated_images,
         positive_prompt_safety_attributes,
     }
@@ -68,7 +70,10 @@ pub(super) fn parse_edit_image_response(value: &Value) -> EditImageResponse {
         generated_images.push(parse_generated_image(&item));
     }
 
-    EditImageResponse { generated_images }
+    EditImageResponse {
+        sdk_http_response: None,
+        generated_images,
+    }
 }
 
 pub(super) fn parse_upscale_image_response(value: &Value) -> UpscaleImageResponse {
@@ -83,7 +88,10 @@ pub(super) fn parse_upscale_image_response(value: &Value) -> UpscaleImageRespons
         generated_images.push(parse_generated_image(&item));
     }
 
-    UpscaleImageResponse { generated_images }
+    UpscaleImageResponse {
+        sdk_http_response: None,
+        generated_images,
+    }
 }
 
 pub(super) fn parse_recontext_image_response(value: &Value) -> RecontextImageResponse {

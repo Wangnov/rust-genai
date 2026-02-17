@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::enums::{AdapterSize, JobState, TuningMethod, TuningMode};
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
 
 /// Tuning job state alias.
 pub type TuningJobState = JobState;
@@ -264,6 +264,9 @@ pub struct TuningJob {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTuningJobsResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tuning_jobs: Option<Vec<TuningJob>>,
     #[serde(skip_serializing_if = "Option::is_none")]

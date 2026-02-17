@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::content::Content;
 use crate::enums::JobState;
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
 use crate::models::{EmbedContentConfig, GenerateContentConfig};
 use crate::response::GenerateContentResponse;
 
@@ -211,6 +211,9 @@ pub struct ListBatchJobsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBatchJobsResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_jobs: Option<Vec<BatchJob>>,
     #[serde(skip_serializing_if = "Option::is_none")]

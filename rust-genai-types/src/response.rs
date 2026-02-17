@@ -6,12 +6,16 @@ use crate::enums::{
     MediaModality, TrafficType, UrlRetrievalStatus,
 };
 use crate::grounding::{CitationMetadata, GroundingMetadata};
+use crate::http::HttpResponse;
 use crate::logprobs::LogprobsResult;
 
 /// 生成内容响应。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(default)]
     pub candidates: Vec<Candidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,6 +222,7 @@ mod tests {
         let call_content = Content::from_parts(vec![Part::function_call(call)], Role::Model);
 
         let response = GenerateContentResponse {
+            sdk_http_response: None,
             candidates: vec![
                 Candidate {
                     content: Some(text_content),

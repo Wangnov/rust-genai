@@ -9,6 +9,7 @@ use reqwest::header::{HeaderName, HeaderValue};
 use crate::client::Credentials;
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 use crate::upload;
 #[cfg(test)]
 use crate::upload::CHUNK_SIZE;
@@ -169,7 +170,10 @@ impl Files {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<ListFilesResponse>().await?)
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListFilesResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有文件（自动翻页）。
@@ -290,11 +294,16 @@ impl Files {
             });
         }
 
+        let headers = response.headers().clone();
         let text = response.text().await.unwrap_or_default();
         if text.trim().is_empty() {
-            return Ok(RegisterFilesResponse::default());
+            let mut result = RegisterFilesResponse::default();
+            result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+            return Ok(result);
         }
-        Ok(serde_json::from_str(&text)?)
+        let mut result: RegisterFilesResponse = serde_json::from_str(&text)?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 轮询直到文件状态变为 ACTIVE。

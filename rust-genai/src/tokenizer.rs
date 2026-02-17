@@ -685,6 +685,7 @@ pub mod kitoken {
             }
 
             Ok(ComputeTokensResponse {
+                sdk_http_response: None,
                 tokens_info: Some(tokens_info),
             })
         }
