@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use serde_json::json;
-use wiremock::matchers::{method, path, query_param, query_param_is_missing};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use rust_genai::types::interactions::CreateInteractionConfig;
@@ -14,7 +14,9 @@ async fn interactions_api_flow() {
 
     Mock::given(method("POST"))
         .and(path("/v1beta/interactions"))
-        .and(query_param_is_missing("alt"))
+        .and(body_json(
+            json!({"model": "gemini-2.0-flash", "input": "hi"}),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "int_1",
             "model": "gemini-2.0-flash"
@@ -24,12 +26,12 @@ async fn interactions_api_flow() {
 
     Mock::given(method("POST"))
         .and(path("/v1beta/interactions"))
-        .and(query_param("alt", "sse"))
+        .and(body_json(json!({"model": "gemini-2.0-flash", "input": "hi", "stream": true})))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
                 .set_body_string(concat!(
-                    "data: {\"event_type\":\"interactions.create\",\"data\":{\"id\":\"int_1\"}}\n\n",
+                    "data: {\"event_type\":\"interaction.start\",\"event_id\":\"evt_1\",\"interaction\":{\"id\":\"int_1\",\"status\":\"in_progress\"}}\n\n",
                     "data: [DONE]\n\n"
                 )),
         )
@@ -52,7 +54,7 @@ async fn interactions_api_flow() {
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/interactions/int_1:cancel"))
+        .and(path("/v1beta/interactions/int_1/cancel"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "int_1",
             "model": "gemini-2.0-flash"
@@ -76,7 +78,7 @@ async fn interactions_api_flow() {
     let mut saw_event = false;
     while let Some(item) = stream.next().await {
         let event = item.unwrap();
-        if event.event_type.as_deref() == Some("interactions.create") {
+        if event.event_type.as_deref() == Some("interaction.start") {
             saw_event = true;
         }
     }
@@ -108,7 +110,7 @@ async fn interactions_error_responses_and_empty_body() {
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/interactions/int_bad:cancel"))
+        .and(path("/v1beta/interactions/int_bad/cancel"))
         .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
         .mount(&server)
         .await;

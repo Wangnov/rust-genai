@@ -5,13 +5,15 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::caches::{
-    CachedContent, CreateCachedContentConfig, DeleteCachedContentConfig, GetCachedContentConfig,
-    ListCachedContentsConfig, ListCachedContentsResponse, UpdateCachedContentConfig,
+    CachedContent, CreateCachedContentConfig, DeleteCachedContentConfig, DeleteCachedContentResponse,
+    GetCachedContentConfig, ListCachedContentsConfig, ListCachedContentsResponse,
+    UpdateCachedContentConfig,
 };
 use serde_json::{json, Map, Value};
 
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::sdk_http_response_from_headers;
 
 #[derive(Clone)]
 pub struct Caches {
@@ -52,7 +54,10 @@ impl Caches {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -86,7 +91,10 @@ impl Caches {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -115,7 +123,10 @@ impl Caches {
         let mut request = self.inner.http.patch(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -129,7 +140,7 @@ impl Caches {
     ///
     /// # Errors
     /// 当请求失败或服务端返回错误时返回错误。
-    pub async fn delete(&self, name: impl AsRef<str>) -> Result<()> {
+    pub async fn delete(&self, name: impl AsRef<str>) -> Result<DeleteCachedContentResponse> {
         self.delete_with_config(name, DeleteCachedContentConfig::default())
             .await
     }
@@ -142,21 +153,32 @@ impl Caches {
         &self,
         name: impl AsRef<str>,
         mut config: DeleteCachedContentConfig,
-    ) -> Result<()> {
+    ) -> Result<DeleteCachedContentResponse> {
         let http_options = config.http_options.take();
         let name = normalize_cached_content_name(&self.inner, name.as_ref())?;
         let url = build_cached_content_url(&self.inner, &name, http_options.as_ref());
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(())
+        let headers = response.headers().clone();
+        let text = response.text().await.unwrap_or_default();
+        let mut result = if text.trim().is_empty() {
+            DeleteCachedContentResponse::default()
+        } else {
+            serde_json::from_str::<DeleteCachedContentResponse>(&text)?
+        };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出缓存。
@@ -182,14 +204,20 @@ impl Caches {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<ListCachedContentsResponse>().await?)
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListCachedContentsResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有缓存（自动翻页）。

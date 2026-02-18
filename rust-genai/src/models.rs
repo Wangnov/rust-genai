@@ -13,9 +13,9 @@ use rust_genai_types::models::{
     CountTokensRequest, CountTokensResponse, DeleteModelConfig, DeleteModelResponse,
     EditImageConfig, EditImageResponse, EmbedContentConfig, EmbedContentResponse,
     GenerateContentConfig, GenerateContentRequest, GenerateImagesConfig, GenerateImagesResponse,
-    GenerateVideosConfig, GenerateVideosSource, Image, ListModelsConfig, ListModelsResponse, Model,
-    RecontextImageConfig, RecontextImageResponse, RecontextImageSource, ReferenceImage,
-    SegmentImageConfig, SegmentImageResponse, SegmentImageSource, UpdateModelConfig,
+    GenerateVideosConfig, GenerateVideosOperation, GenerateVideosSource, Image, ListModelsConfig,
+    ListModelsResponse, Model, RecontextImageConfig, RecontextImageResponse, RecontextImageSource,
+    ReferenceImage, SegmentImageConfig, SegmentImageResponse, SegmentImageSource, UpdateModelConfig,
 };
 use rust_genai_types::response::GenerateContentResponse;
 
@@ -25,6 +25,7 @@ use crate::afc::{
 };
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
+use crate::http_response::{sdk_http_response_from_headers, sdk_http_response_from_headers_and_body};
 use crate::model_capabilities::{
     validate_code_execution_image_inputs, validate_function_response_media,
 };
@@ -36,7 +37,7 @@ use serde_json::Value;
 mod builders;
 mod http;
 mod media;
-mod parsers;
+pub(crate) mod parsers;
 
 use builders::{
     build_edit_image_body, build_embed_body_gemini, build_embed_body_vertex,
@@ -74,6 +75,7 @@ fn build_synthetic_afc_response(
     history: &[Content],
 ) -> GenerateContentResponse {
     let mut response = GenerateContentResponse {
+        sdk_http_response: None,
         candidates: vec![rust_genai_types::response::Candidate {
             content: Some(response_content),
             citation_metadata: None,
@@ -247,24 +249,37 @@ impl Models {
         contents: Vec<Content>,
         config: GenerateContentConfig,
     ) -> Result<GenerateContentResponse> {
+        let should_return_http_response = config.should_return_http_response.unwrap_or(false);
         let model = model.into();
         validate_temperature(&model, &config)?;
         ThoughtSignatureValidator::new(&model).validate(&contents)?;
         validate_function_response_media(&model, &contents)?;
         validate_code_execution_image_inputs(&model, &contents, config.tools.as_deref())?;
 
+        let backend = self.inner.config.backend;
+        if backend == Backend::GeminiApi && config.model_armor_config.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config is not supported in Gemini API".into(),
+            });
+        }
+        if config.model_armor_config.is_some() && config.safety_settings.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config cannot be combined with safety_settings".into(),
+            });
+        }
+
         let request = GenerateContentRequest {
             contents,
             system_instruction: config.system_instruction,
             generation_config: config.generation_config,
             safety_settings: config.safety_settings,
+            model_armor_config: config.model_armor_config,
             tools: config.tools,
             tool_config: config.tool_config,
             cached_content: config.cached_content,
             labels: config.labels,
         };
 
-        let backend = self.inner.config.backend;
         let url = build_model_method_url(&self.inner, &model, "generateContent")?;
         let body = match backend {
             Backend::GeminiApi => converters::generate_content_request_to_mldev(&request)?,
@@ -279,11 +294,26 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
+        if should_return_http_response {
+            let body = response.text().await.unwrap_or_default();
+            return Ok(GenerateContentResponse {
+                sdk_http_response: Some(sdk_http_response_from_headers_and_body(&headers, body)),
+                candidates: Vec::new(),
+                create_time: None,
+                automatic_function_calling_history: None,
+                prompt_feedback: None,
+                usage_metadata: None,
+                model_version: None,
+                response_id: None,
+            });
+        }
         let value = response.json::<Value>().await?;
-        let result = match backend {
+        let mut result = match backend {
             Backend::GeminiApi => converters::generate_content_response_from_mldev(value)?,
             Backend::VertexAi => converters::generate_content_response_from_vertex(value)?,
         };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -299,6 +329,12 @@ impl Models {
         config: GenerateContentConfig,
         mut callable_tools: Vec<Box<dyn CallableTool>>,
     ) -> Result<GenerateContentResponse> {
+        if config.should_return_http_response.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "should_return_http_response is not supported in callable tools methods"
+                    .into(),
+            });
+        }
         let model = model.into();
         if callable_tools.is_empty() {
             return self
@@ -396,6 +432,12 @@ impl Models {
         config: GenerateContentConfig,
         mut callable_tools: Vec<Box<dyn CallableTool>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>> {
+        if config.should_return_http_response.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "should_return_http_response is not supported in callable tools methods"
+                    .into(),
+            });
+        }
         let model = model.into();
         if callable_tools.is_empty() {
             return self.generate_content_stream(model, contents, config).await;
@@ -454,17 +496,35 @@ impl Models {
         contents: Vec<Content>,
         config: GenerateContentConfig,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>> {
+        if config.should_return_http_response.unwrap_or(false) {
+            return Err(Error::InvalidConfig {
+                message: "should_return_http_response is not supported in streaming methods".into(),
+            });
+        }
         let model = model.into();
         validate_temperature(&model, &config)?;
         ThoughtSignatureValidator::new(&model).validate(&contents)?;
         validate_function_response_media(&model, &contents)?;
         validate_code_execution_image_inputs(&model, &contents, config.tools.as_deref())?;
 
+        let backend = self.inner.config.backend;
+        if backend == Backend::GeminiApi && config.model_armor_config.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config is not supported in Gemini API".into(),
+            });
+        }
+        if config.model_armor_config.is_some() && config.safety_settings.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config cannot be combined with safety_settings".into(),
+            });
+        }
+
         let request = GenerateContentRequest {
             contents,
             system_instruction: config.system_instruction,
             generation_config: config.generation_config,
             safety_settings: config.safety_settings,
+            model_armor_config: config.model_armor_config,
             tools: config.tools,
             tool_config: config.tool_config,
             cached_content: config.cached_content,
@@ -483,7 +543,15 @@ impl Models {
             });
         }
 
-        Ok(Box::pin(parse_sse_stream(response)))
+        let headers = response.headers().clone();
+        let sdk_http_response = sdk_http_response_from_headers(&headers);
+        let stream = parse_sse_stream(response).map(move |item| {
+            item.map(|mut resp| {
+                resp.sdk_http_response = Some(sdk_http_response.clone());
+                resp
+            })
+        });
+        Ok(Box::pin(stream))
     }
 
     /// 生成嵌入向量（默认配置）。
@@ -533,11 +601,18 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         match self.inner.config.backend {
-            Backend::GeminiApi => Ok(response.json::<EmbedContentResponse>().await?),
+            Backend::GeminiApi => {
+                let mut result = response.json::<EmbedContentResponse>().await?;
+                result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+                Ok(result)
+            }
             Backend::VertexAi => {
                 let value = response.json::<Value>().await?;
-                Ok(convert_vertex_embed_response(&value)?)
+                let mut result = convert_vertex_embed_response(&value)?;
+                result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+                Ok(result)
             }
         }
     }
@@ -588,11 +663,13 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        let result = match backend {
+        let mut result = match backend {
             Backend::GeminiApi => converters::count_tokens_response_from_mldev(value)?,
             Backend::VertexAi => converters::count_tokens_response_from_vertex(value)?,
         };
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -637,15 +714,20 @@ impl Models {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, config.http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, config.http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        let result = converters::compute_tokens_response_from_vertex(value)?;
+        let mut result = converters::compute_tokens_response_from_vertex(value)?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -657,6 +739,7 @@ impl Models {
     ) -> CountTokensResponse {
         let total = i32::try_from(estimator.estimate_tokens(contents)).unwrap_or(i32::MAX);
         CountTokensResponse {
+            sdk_http_response: None,
             total_tokens: Some(total),
             cached_content_token_count: None,
         }
@@ -673,6 +756,7 @@ impl Models {
         let total =
             i32::try_from(estimator.estimate_tokens(&estimation_contents)).unwrap_or(i32::MAX);
         CountTokensResponse {
+            sdk_http_response: None,
             total_tokens: Some(total),
             cached_content_token_count: None,
         }
@@ -719,7 +803,10 @@ impl Models {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -727,8 +814,11 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        Ok(parse_generate_images_response(&value))
+        let mut result = parse_generate_images_response(&value);
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 编辑图像（仅 Vertex AI）。
@@ -761,7 +851,10 @@ impl Models {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -769,8 +862,11 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        Ok(parse_edit_image_response(&value))
+        let mut result = parse_edit_image_response(&value);
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 放大图像（仅 Vertex AI）。
@@ -803,7 +899,10 @@ impl Models {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -811,8 +910,11 @@ impl Models {
             });
         }
 
+        let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
-        Ok(parse_upscale_image_response(&value))
+        let mut result = parse_upscale_image_response(&value);
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// Recontext 图像（Vertex AI）。
@@ -843,7 +945,10 @@ impl Models {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -883,7 +988,10 @@ impl Models {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -905,7 +1013,7 @@ impl Models {
         model: impl Into<String>,
         source: GenerateVideosSource,
         mut config: GenerateVideosConfig,
-    ) -> Result<rust_genai_types::operations::Operation> {
+    ) -> Result<GenerateVideosOperation> {
         let http_options = config.http_options.take();
         let model = model.into();
         let mut body = build_generate_videos_body(self.inner.config.backend, &source, &config)?;
@@ -917,7 +1025,10 @@ impl Models {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -939,7 +1050,7 @@ impl Models {
         model: impl Into<String>,
         prompt: impl Into<String>,
         config: GenerateVideosConfig,
-    ) -> Result<rust_genai_types::operations::Operation> {
+    ) -> Result<GenerateVideosOperation> {
         let source = GenerateVideosSource {
             prompt: Some(prompt.into()),
             ..GenerateVideosSource::default()
@@ -971,7 +1082,9 @@ impl Models {
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        let result = response.json::<ListModelsResponse>().await?;
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListModelsResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(result)
     }
 
@@ -1046,7 +1159,10 @@ impl Models {
         let mut request = self.inner.http.patch(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -1073,20 +1189,25 @@ impl Models {
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
                 message: response.text().await.unwrap_or_default(),
             });
         }
+        let headers = response.headers().clone();
         if response.content_length().unwrap_or(0) == 0 {
-            return Ok(DeleteModelResponse::default());
+            let mut resp = DeleteModelResponse::default();
+            resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+            return Ok(resp);
         }
-        Ok(response
-            .json::<DeleteModelResponse>()
-            .await
-            .unwrap_or_default())
+        let mut resp = response.json::<DeleteModelResponse>().await.unwrap_or_default();
+        resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(resp)
     }
 }
 

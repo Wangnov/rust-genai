@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::enums::DocumentState;
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
 
 /// User provided string values assigned to a single metadata key.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -86,6 +86,9 @@ pub struct ListDocumentsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListDocumentsResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

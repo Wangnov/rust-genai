@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::content::Content;
 use crate::enums::JobState;
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
 use crate::models::{EmbedContentConfig, GenerateContentConfig};
 use crate::response::GenerateContentResponse;
 
@@ -56,6 +56,9 @@ pub struct JobError {
 pub struct InlinedResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<GenerateContentResponse>,
+    /// Optional. The metadata to be associated with the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JobError>,
 }
@@ -182,12 +185,35 @@ pub struct GetBatchJobConfig {
     pub http_options: Option<HttpOptions>,
 }
 
+/// 取消批处理任务配置。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelBatchJobConfig {
+    #[serde(skip_serializing, skip_deserializing)]
+    pub http_options: Option<HttpOptions>,
+}
+
 /// 删除批处理任务配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteBatchJobConfig {
     #[serde(skip_serializing, skip_deserializing)]
     pub http_options: Option<HttpOptions>,
+}
+
+/// The return value of delete operation.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteResourceJob {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub done: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<JobError>,
 }
 
 /// 列出批处理任务配置。
@@ -208,6 +234,9 @@ pub struct ListBatchJobsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBatchJobsResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_jobs: Option<Vec<BatchJob>>,
     #[serde(skip_serializing_if = "Option::is_none")]

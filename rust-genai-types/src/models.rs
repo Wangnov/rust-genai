@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 
 use crate::base64_serde;
-use crate::config::{GenerationConfig, SafetySetting};
+use crate::config::{GenerationConfig, ModelArmorConfig, SafetySetting};
 use crate::content::Content;
 use crate::enums::{
     ControlReferenceType, EditMode, ImagePromptLanguage, MaskReferenceMode, PersonGeneration,
     ReferenceImageType, SafetyFilterLevel, SegmentMode, SubjectReferenceType,
     VideoCompressionQuality, VideoGenerationMaskMode, VideoGenerationReferenceType,
 };
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
+use crate::operations::OperationError;
 use crate::tool::{Tool, ToolConfig};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// `GenerateContent` 请求配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -22,6 +24,10 @@ pub struct GenerateContentConfig {
     pub generation_config: Option<GenerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
+    /// Settings for prompt and response sanitization using the Model Armor service.
+    /// If supplied, `safety_settings` must not be supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_armor_config: Option<ModelArmorConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,6 +39,11 @@ pub struct GenerateContentConfig {
     pub cached_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<HashMap<String, String>>,
+    /// Optional. If true, returns the raw HTTP response body in `sdk_http_response.body` (SDK only).
+    ///
+    /// Note: Not supported in streaming methods.
+    #[serde(skip_serializing, skip_deserializing)]
+    pub should_return_http_response: Option<bool>,
 }
 
 /// `GenerateContent` 请求体。
@@ -46,6 +57,10 @@ pub struct GenerateContentRequest {
     pub generation_config: Option<GenerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
+    /// Settings for prompt and response sanitization using the Model Armor service.
+    /// If supplied, `safety_settings` must not be supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_armor_config: Option<ModelArmorConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,6 +115,9 @@ pub struct CountTokensRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,6 +159,9 @@ pub struct TokensInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputeTokensResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     /// Lists of tokens info from the input.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens_info: Option<Vec<TokensInfo>>,
@@ -194,6 +215,9 @@ pub struct EmbedContentMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbedContentResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embeddings: Option<Vec<ContentEmbedding>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -238,6 +262,9 @@ pub struct ListModelsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListModelsResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<Vec<Model>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -271,7 +298,11 @@ pub struct DeleteModelConfig {
 /// `DeleteModel` 响应体（空响应）。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct DeleteModelResponse {}
+pub struct DeleteModelResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
+}
 
 /// 图像生成配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -363,6 +394,9 @@ pub struct GeneratedImage {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateImagesResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(default)]
     pub generated_images: Vec<GeneratedImage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -476,6 +510,9 @@ pub struct EditImageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EditImageResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(default)]
     pub generated_images: Vec<GeneratedImage>,
 }
@@ -515,6 +552,9 @@ pub struct UpscaleImageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UpscaleImageResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(default)]
     pub generated_images: Vec<GeneratedImage>,
 }
@@ -755,4 +795,20 @@ pub struct GenerateVideosResponse {
     pub rai_media_filtered_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rai_media_filtered_reasons: Option<Vec<String>>,
+}
+
+/// 视频生成操作（LRO）。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateVideosOperation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub done: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<OperationError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<GenerateVideosResponse>,
 }

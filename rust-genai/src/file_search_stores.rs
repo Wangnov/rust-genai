@@ -7,16 +7,17 @@ use std::time::Duration;
 use crate::client::{Backend, ClientInner};
 use crate::documents::Documents;
 use crate::error::{Error, Result};
+use crate::http_response::{sdk_http_response_from_headers, sdk_http_response_from_headers_and_body};
 use crate::upload;
 #[cfg(test)]
 use crate::upload::CHUNK_SIZE;
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::file_search_stores::{
     CreateFileSearchStoreConfig, DeleteFileSearchStoreConfig, FileSearchStore,
-    GetFileSearchStoreConfig, ImportFileConfig, ListFileSearchStoresConfig,
-    ListFileSearchStoresResponse, UploadToFileSearchStoreConfig,
+    GetFileSearchStoreConfig, ImportFileConfig, ImportFileOperation, ListFileSearchStoresConfig,
+    ListFileSearchStoresResponse, UploadToFileSearchStoreConfig, UploadToFileSearchStoreOperation,
+    UploadToFileSearchStoreResumableResponse,
 };
-use rust_genai_types::operations::Operation;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -50,7 +51,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -85,7 +89,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -121,7 +128,10 @@ impl FileSearchStores {
         let mut request = self.inner.http.delete(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -155,14 +165,20 @@ impl FileSearchStores {
         let mut request = self.inner.http.get(url);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<ListFileSearchStoresResponse>().await?)
+        let headers = response.headers().clone();
+        let mut result = response.json::<ListFileSearchStoresResponse>().await?;
+        result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+        Ok(result)
     }
 
     /// 列出所有 `FileSearchStore`（自动翻页）。
@@ -210,7 +226,7 @@ impl FileSearchStores {
         file_search_store_name: impl AsRef<str>,
         data: Vec<u8>,
         mut config: UploadToFileSearchStoreConfig,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         ensure_gemini_backend(&self.inner)?;
         let mime_type = config
             .mime_type
@@ -221,7 +237,7 @@ impl FileSearchStores {
 
         let http_options = config.http_options.take();
         let size_bytes = data.len() as u64;
-        let upload_url = self
+        let (upload_url, _, _) = self
             .start_resumable_upload(
                 file_search_store_name.as_ref(),
                 &config,
@@ -244,7 +260,7 @@ impl FileSearchStores {
         file_search_store_name: impl AsRef<str>,
         path: impl AsRef<Path>,
         mut config: UploadToFileSearchStoreConfig,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         ensure_gemini_backend(&self.inner)?;
         let path = path.as_ref();
         let metadata = tokio::fs::metadata(path).await?;
@@ -265,7 +281,7 @@ impl FileSearchStores {
 
         let file_name = path.file_name().and_then(|name| name.to_str());
         let http_options = config.http_options.take();
-        let upload_url = self
+        let (upload_url, _, _) = self
             .start_resumable_upload(
                 file_search_store_name.as_ref(),
                 &config,
@@ -285,6 +301,48 @@ impl FileSearchStores {
         .await
     }
 
+    /// 初始化一个 `FileSearchStore` 的 resumable upload，并返回原始 HTTP headers（含 `x-goog-upload-url`）。
+    ///
+    /// 该方法只执行 `start` 请求，不会上传文件内容。
+    ///
+    /// # Errors
+    /// 当配置无效、请求失败或响应解析失败时返回错误。
+    pub async fn upload_to_file_search_store_resumable(
+        &self,
+        file_search_store_name: impl AsRef<str>,
+        mut config: UploadToFileSearchStoreConfig,
+    ) -> Result<UploadToFileSearchStoreResumableResponse> {
+        ensure_gemini_backend(&self.inner)?;
+
+        let should_return_http_response = config.should_return_http_response.unwrap_or(false);
+        let http_options = config.http_options.take();
+        let mime_type = config
+            .mime_type
+            .clone()
+            .ok_or_else(|| Error::InvalidConfig {
+                message: "mime_type is required when starting a resumable upload".into(),
+            })?;
+
+        let (_, headers, text) = self
+            .start_resumable_upload(
+                file_search_store_name.as_ref(),
+                &config,
+                http_options.as_ref(),
+                &mime_type,
+                None,
+                None,
+            )
+            .await?;
+
+        let mut response = UploadToFileSearchStoreResumableResponse::default();
+        response.sdk_http_response = Some(if should_return_http_response {
+            sdk_http_response_from_headers_and_body(&headers, text)
+        } else {
+            sdk_http_response_from_headers(&headers)
+        });
+        Ok(response)
+    }
+
     /// 导入 `File` API 文件到 `FileSearchStore`。
     ///
     /// # Errors
@@ -294,7 +352,7 @@ impl FileSearchStores {
         file_search_store_name: impl AsRef<str>,
         file_name: impl AsRef<str>,
         mut config: ImportFileConfig,
-    ) -> Result<Operation> {
+    ) -> Result<ImportFileOperation> {
         ensure_gemini_backend(&self.inner)?;
         let http_options = config.http_options.take();
         let store_name = normalize_file_search_store_name(file_search_store_name.as_ref());
@@ -315,14 +373,17 @@ impl FileSearchStores {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
                 message: response.text().await.unwrap_or_default(),
             });
         }
-        Ok(response.json::<Operation>().await?)
+        Ok(response.json::<ImportFileOperation>().await?)
     }
 
     async fn start_resumable_upload(
@@ -333,7 +394,7 @@ impl FileSearchStores {
         mime_type: &str,
         size_bytes: Option<u64>,
         file_name: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<(String, reqwest::header::HeaderMap, String)> {
         let store_name = normalize_file_search_store_name(file_search_store_name);
         let url = build_file_search_store_upload_url(&self.inner, &store_name, http_options);
         let mut body = serde_json::to_value(config)?;
@@ -357,7 +418,10 @@ impl FileSearchStores {
             request = request.header("X-Goog-Upload-File-Name", file_name);
         }
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options)
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -365,17 +429,19 @@ impl FileSearchStores {
             });
         }
 
-        let upload_url =
-            response
-                .headers()
-                .get("x-goog-upload-url")
-                .ok_or_else(|| Error::Parse {
-                    message: "Missing x-goog-upload-url header".into(),
-                })?;
-        let upload_url = upload_url.to_str().map_err(|_| Error::Parse {
-            message: "Invalid x-goog-upload-url header".into(),
-        })?;
-        Ok(upload_url.to_string())
+        let headers = response.headers().clone();
+        let upload_url = headers
+            .get("x-goog-upload-url")
+            .ok_or_else(|| Error::Parse {
+                message: "Missing x-goog-upload-url header".into(),
+            })?
+            .to_str()
+            .map_err(|_| Error::Parse {
+                message: "Invalid x-goog-upload-url header".into(),
+            })?
+            .to_string();
+        let text = response.text().await.unwrap_or_default();
+        Ok((upload_url, headers, text))
     }
 
     async fn upload_bytes(
@@ -383,7 +449,7 @@ impl FileSearchStores {
         upload_url: &str,
         data: &[u8],
         http_options: Option<&rust_genai_types::http::HttpOptions>,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         let validate_status = |_status: &str| Ok(());
         upload::upload_bytes_with(
             data,
@@ -402,7 +468,7 @@ impl FileSearchStores {
         reader: &mut tokio::fs::File,
         size_bytes: u64,
         http_options: Option<&rust_genai_types::http::HttpOptions>,
-    ) -> Result<Operation> {
+    ) -> Result<UploadToFileSearchStoreOperation> {
         let validate_status = |_status: &str| Ok(());
         upload::upload_reader_with(
             reader,
@@ -423,7 +489,7 @@ impl FileSearchStores {
         offset: u64,
         finalize: bool,
         http_options: Option<&rust_genai_types::http::HttpOptions>,
-    ) -> Result<(String, Option<Operation>)> {
+    ) -> Result<(String, Option<UploadToFileSearchStoreOperation>)> {
         let command = if finalize {
             "upload, finalize"
         } else {
@@ -439,7 +505,10 @@ impl FileSearchStores {
             .header("Content-Length", data_len.to_string())
             .body(data);
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options)
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),
@@ -462,7 +531,7 @@ impl FileSearchStores {
             return Ok((status, None));
         }
 
-        let operation = response.json::<Operation>().await?;
+        let operation = response.json::<UploadToFileSearchStoreOperation>().await?;
         Ok((status, Some(operation)))
     }
 }
@@ -638,7 +707,10 @@ fn merge_extra_body(
 }
 
 #[cfg(test)]
-fn finalize_upload(status: &str, operation: Option<Operation>) -> Result<Operation> {
+fn finalize_upload(
+    status: &str,
+    operation: Option<UploadToFileSearchStoreOperation>,
+) -> Result<UploadToFileSearchStoreOperation> {
     upload::finalize_upload(status, operation)
 }
 
@@ -904,6 +976,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(op.name.as_deref(), Some("operations/path"));
+    }
+
+    #[tokio::test]
+    async fn test_upload_to_file_search_store_resumable_sets_http_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(
+                "/upload/v1beta/fileSearchStores/store:uploadToFileSearchStore",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header(
+                        "x-goog-upload-url",
+                        format!("{}/upload-resumable", server.uri()),
+                    )
+                    .set_body_string("raw-body"),
+            )
+            .mount(&server)
+            .await;
+
+        let inner = Arc::new(test_client_inner(Backend::GeminiApi));
+        let stores = FileSearchStores::new(inner);
+        let config = UploadToFileSearchStoreConfig {
+            mime_type: Some("text/plain".to_string()),
+            should_return_http_response: Some(true),
+            http_options: Some(rust_genai_types::http::HttpOptions {
+                base_url: Some(format!("{}/", server.uri())),
+                api_version: Some("v1beta".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let resp = stores
+            .upload_to_file_search_store_resumable("fileSearchStores/store", config)
+            .await
+            .unwrap();
+        let sdk = resp.sdk_http_response.unwrap();
+        let headers = sdk.headers.unwrap();
+        assert!(headers.get("x-goog-upload-url").is_some());
+        assert_eq!(sdk.body.as_deref(), Some("raw-body"));
     }
 
     #[tokio::test]

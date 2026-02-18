@@ -33,7 +33,7 @@ pub async fn mount_default_mock(server: &MockServer) {
     )
     .to_string();
     let interaction_stream_body = concat!(
-        "data: {\"event_type\":\"interactions.create\",\"data\":{\"id\":\"int_1\",\"model\":\"gemini-2.0-flash\"}}\n\n",
+        "data: {\"event_type\":\"interaction.start\",\"event_id\":\"evt_1\",\"interaction\":{\"id\":\"int_1\",\"status\":\"in_progress\"}}\n\n",
         "data: [DONE]\n\n"
     )
     .to_string();
@@ -71,16 +71,26 @@ pub async fn mount_default_mock(server: &MockServer) {
                 return response;
             }
 
-            if req.url.query().is_some_and(|q| q.contains("alt=sse")) {
-                return ResponseTemplate::new(200)
-                    .insert_header("content-type", "text/event-stream")
-                    .set_body_string(interaction_stream_body.clone());
-            }
-
             if path.contains(":streamGenerateContent") {
                 return ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
                     .set_body_string(stream_body.clone());
+            }
+
+            let accepts_sse = req
+                .headers
+                .get("accept")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.contains("text/event-stream"));
+            if accepts_sse && path.ends_with("/interactions") {
+                return ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(interaction_stream_body.clone());
+            }
+            if accepts_sse && path.contains("/interactions/") {
+                return ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(interaction_stream_body.clone());
             }
 
             if path.contains(":generateContent") {

@@ -17,6 +17,9 @@ pub struct AuthTokens {
     pub(crate) inner: Arc<ClientInner>,
 }
 
+/// `AuthTokens` 的别名（与官方 SDK 的 `tokens` 模块命名对齐）。
+pub type Tokens = AuthTokens;
+
 impl AuthTokens {
     pub(crate) const fn new(inner: Arc<ClientInner>) -> Self {
         Self { inner }
@@ -39,7 +42,10 @@ impl AuthTokens {
         let mut request = self.inner.http.post(url).json(&body);
         request = apply_http_options(request, http_options.as_ref())?;
 
-        let response = self.inner.send(request).await?;
+        let response = self
+            .inner
+            .send_with_http_options(request, http_options.as_ref())
+            .await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {
                 status: response.status().as_u16(),

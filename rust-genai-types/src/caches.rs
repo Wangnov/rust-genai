@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::content::Content;
-use crate::http::HttpOptions;
+use crate::http::{HttpOptions, HttpResponse};
 use crate::tool::{Tool, ToolConfig};
 
 /// 创建缓存配置。
@@ -70,6 +70,15 @@ pub struct DeleteCachedContentConfig {
     pub http_options: Option<HttpOptions>,
 }
 
+/// 删除缓存响应。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteCachedContentResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
+}
+
 /// 列出缓存配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -125,6 +134,9 @@ pub struct CachedContent {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ListCachedContentsResponse {
+    /// Optional. Used to retain the full HTTP response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk_http_response: Option<HttpResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_contents: Option<Vec<CachedContent>>,
     #[serde(skip_serializing_if = "Option::is_none")]

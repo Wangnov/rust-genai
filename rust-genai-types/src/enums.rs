@@ -358,6 +358,16 @@ pub enum JobState {
 pub enum TuningMethod {
     SupervisedFineTuning,
     PreferenceTuning,
+    Distillation,
+}
+
+/// Tuning mode for SFT tuning (Vertex AI only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TuningMode {
+    TuningModeUnspecified,
+    TuningModeFull,
+    TuningModePeftAdapter,
 }
 
 /// Adapter size for tuning.
@@ -399,6 +409,15 @@ pub enum FinishReason {
     Language,
     Other,
     Blocklist,
+    ProhibitedContent,
+    Spii,
+    MalformedFunctionCall,
+    ImageSafety,
+    UnexpectedToolCall,
+    ImageProhibitedContent,
+    NoImage,
+    ImageRecitation,
+    ImageOther,
 }
 
 /// Thinking level for thinking models.

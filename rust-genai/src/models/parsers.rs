@@ -1,11 +1,14 @@
 use crate::client::Backend;
 use crate::error::Result;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use rust_genai_types::models::{
     ContentEmbedding, EditImageResponse, EmbedContentMetadata, EmbedContentResponse, EntityLabel,
-    GenerateImagesResponse, GeneratedImage, GeneratedImageMask, Image, RecontextImageResponse,
-    SafetyAttributes, SegmentImageResponse, UpscaleImageResponse,
+    GenerateImagesResponse, GenerateVideosOperation, GenerateVideosResponse, GeneratedImage,
+    GeneratedImageMask, GeneratedVideo, Image, RecontextImageResponse, SafetyAttributes,
+    SegmentImageResponse, UpscaleImageResponse, Video,
 };
-use rust_genai_types::operations::Operation;
+use rust_genai_types::operations::OperationError;
 use serde_json::Value;
 
 pub(super) fn convert_vertex_embed_response(value: &Value) -> Result<EmbedContentResponse> {
@@ -29,6 +32,7 @@ pub(super) fn convert_vertex_embed_response(value: &Value) -> Result<EmbedConten
         .transpose()?;
 
     Ok(EmbedContentResponse {
+        sdk_http_response: None,
         embeddings: Some(embeddings),
         metadata,
     })
@@ -51,6 +55,7 @@ pub(super) fn parse_generate_images_response(value: &Value) -> GenerateImagesRes
         .and_then(parse_safety_attributes);
 
     GenerateImagesResponse {
+        sdk_http_response: None,
         generated_images,
         positive_prompt_safety_attributes,
     }
@@ -68,7 +73,10 @@ pub(super) fn parse_edit_image_response(value: &Value) -> EditImageResponse {
         generated_images.push(parse_generated_image(&item));
     }
 
-    EditImageResponse { generated_images }
+    EditImageResponse {
+        sdk_http_response: None,
+        generated_images,
+    }
 }
 
 pub(super) fn parse_upscale_image_response(value: &Value) -> UpscaleImageResponse {
@@ -83,7 +91,10 @@ pub(super) fn parse_upscale_image_response(value: &Value) -> UpscaleImageRespons
         generated_images.push(parse_generated_image(&item));
     }
 
-    UpscaleImageResponse { generated_images }
+    UpscaleImageResponse {
+        sdk_http_response: None,
+        generated_images,
+    }
 }
 
 pub(super) fn parse_recontext_image_response(value: &Value) -> RecontextImageResponse {
@@ -116,18 +127,137 @@ pub(super) fn parse_segment_image_response(value: &Value) -> SegmentImageRespons
     SegmentImageResponse { generated_masks }
 }
 
-pub(super) fn parse_generate_videos_operation(value: Value, backend: Backend) -> Result<Operation> {
-    let mut operation: Operation = serde_json::from_value(value)?;
-    if backend == Backend::GeminiApi {
-        if let Some(response) = operation.response.take() {
-            if let Some(inner) = response.get("generateVideoResponse") {
-                operation.response = Some(inner.clone());
-            } else {
-                operation.response = Some(response);
+pub(crate) fn parse_generate_videos_operation(
+    value: Value,
+    backend: Backend,
+) -> Result<GenerateVideosOperation> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RawOperation {
+        name: Option<String>,
+        metadata: Option<Value>,
+        done: Option<bool>,
+        error: Option<OperationError>,
+        response: Option<Value>,
+    }
+
+    let mut raw: RawOperation = serde_json::from_value(value)?;
+
+    let response = match backend {
+        Backend::GeminiApi => raw
+            .response
+            .take()
+            .and_then(|response| response.get("generateVideoResponse").cloned().or(Some(response))),
+        Backend::VertexAi => raw.response.take(),
+    };
+
+    let response = response
+        .map(|value| parse_generate_videos_response(&value, backend))
+        .transpose()?;
+
+    Ok(GenerateVideosOperation {
+        name: raw.name,
+        metadata: raw.metadata,
+        done: raw.done,
+        error: raw.error,
+        response,
+    })
+}
+
+fn parse_generate_videos_response(value: &Value, backend: Backend) -> Result<GenerateVideosResponse> {
+    let mut generated_videos = Vec::new();
+
+    match backend {
+        Backend::GeminiApi => {
+            // Gemini API uses `generatedSamples` and wraps each item with `video`.
+            if let Some(items) = value.get("generatedSamples").and_then(Value::as_array) {
+                for item in items {
+                    let video_value = item.get("video").unwrap_or(item);
+                    generated_videos.push(GeneratedVideo {
+                        video: parse_video(video_value, backend)?,
+                    });
+                }
+            }
+        }
+        Backend::VertexAi => {
+            // Vertex AI uses `videos` and each item is a Video object.
+            if let Some(items) = value.get("videos").and_then(Value::as_array) {
+                for item in items {
+                    let video_value = item.get("_self").unwrap_or(item);
+                    generated_videos.push(GeneratedVideo {
+                        video: parse_video(video_value, backend)?,
+                    });
+                }
             }
         }
     }
-    Ok(operation)
+
+    let rai_media_filtered_count = value
+        .get("raiMediaFilteredCount")
+        .and_then(Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok());
+    let rai_media_filtered_reasons = value
+        .get("raiMediaFilteredReasons")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>()
+        });
+
+    Ok(GenerateVideosResponse {
+        generated_videos,
+        rai_media_filtered_count,
+        rai_media_filtered_reasons,
+    })
+}
+
+fn parse_video(value: &Value, backend: Backend) -> Result<Option<Video>> {
+    let obj = match value.as_object() {
+        Some(obj) => obj,
+        None => return Ok(None),
+    };
+
+    let uri_key = match backend {
+        Backend::GeminiApi => "uri",
+        Backend::VertexAi => "gcsUri",
+    };
+    let bytes_key = match backend {
+        Backend::GeminiApi => "encodedVideo",
+        Backend::VertexAi => "bytesBase64Encoded",
+    };
+    let mime_key = match backend {
+        Backend::GeminiApi => "encoding",
+        Backend::VertexAi => "mimeType",
+    };
+
+    let uri = obj
+        .get(uri_key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let video_bytes = match obj.get(bytes_key).and_then(Value::as_str) {
+        Some(encoded) => Some(STANDARD.decode(encoded.as_bytes()).map_err(|e| {
+            crate::error::Error::Parse {
+                message: format!("Invalid base64 in video bytes: {e}"),
+            }
+        })?),
+        None => None,
+    };
+    let mime_type = obj
+        .get(mime_key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    if uri.is_none() && video_bytes.is_none() && mime_type.is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(Video {
+        uri,
+        video_bytes,
+        mime_type,
+    }))
 }
 
 fn parse_generated_image(value: &Value) -> GeneratedImage {
@@ -284,19 +414,28 @@ mod tests {
             json!({
                 "name": "operations/1",
                 "response": {
-                    "generateVideoResponse": {"ok": true}
+                    "generateVideoResponse": {
+                        "generatedSamples": [
+                            {
+                                "video": {
+                                    "uri": "https://example.com/v.mp4",
+                                    "encoding": "video/mp4",
+                                    "encodedVideo": "AQID"
+                                }
+                            }
+                        ]
+                    }
                 }
             }),
             Backend::GeminiApi,
         )
         .unwrap();
-        assert_eq!(
-            op.response
-                .unwrap()
-                .get("ok")
-                .and_then(serde_json::Value::as_bool),
-            Some(true)
-        );
+        let resp = op.response.unwrap();
+        assert_eq!(resp.generated_videos.len(), 1);
+        let video = resp.generated_videos[0].video.as_ref().unwrap();
+        assert_eq!(video.uri.as_deref(), Some("https://example.com/v.mp4"));
+        assert_eq!(video.mime_type.as_deref(), Some("video/mp4"));
+        assert_eq!(video.video_bytes.as_deref(), Some(&[1, 2, 3][..]));
     }
 
     #[test]
