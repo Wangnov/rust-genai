@@ -7,7 +7,9 @@ use std::time::Duration;
 use crate::client::{Backend, ClientInner};
 use crate::documents::Documents;
 use crate::error::{Error, Result};
-use crate::http_response::{sdk_http_response_from_headers, sdk_http_response_from_headers_and_body};
+use crate::http_response::{
+    sdk_http_response_from_headers, sdk_http_response_from_headers_and_body,
+};
 use crate::upload;
 #[cfg(test)]
 use crate::upload::CHUNK_SIZE;

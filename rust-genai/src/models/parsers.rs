@@ -144,10 +144,12 @@ pub(crate) fn parse_generate_videos_operation(
     let mut raw: RawOperation = serde_json::from_value(value)?;
 
     let response = match backend {
-        Backend::GeminiApi => raw
-            .response
-            .take()
-            .and_then(|response| response.get("generateVideoResponse").cloned().or(Some(response))),
+        Backend::GeminiApi => raw.response.take().and_then(|response| {
+            response
+                .get("generateVideoResponse")
+                .cloned()
+                .or(Some(response))
+        }),
         Backend::VertexAi => raw.response.take(),
     };
 
@@ -164,7 +166,10 @@ pub(crate) fn parse_generate_videos_operation(
     })
 }
 
-fn parse_generate_videos_response(value: &Value, backend: Backend) -> Result<GenerateVideosResponse> {
+fn parse_generate_videos_response(
+    value: &Value,
+    backend: Backend,
+) -> Result<GenerateVideosResponse> {
     let mut generated_videos = Vec::new();
 
     match backend {
@@ -236,14 +241,15 @@ fn parse_video(value: &Value, backend: Backend) -> Result<Option<Video>> {
         .get(uri_key)
         .and_then(Value::as_str)
         .map(ToString::to_string);
-    let video_bytes = match obj.get(bytes_key).and_then(Value::as_str) {
-        Some(encoded) => Some(STANDARD.decode(encoded.as_bytes()).map_err(|e| {
-            crate::error::Error::Parse {
-                message: format!("Invalid base64 in video bytes: {e}"),
-            }
-        })?),
-        None => None,
-    };
+    let video_bytes =
+        match obj.get(bytes_key).and_then(Value::as_str) {
+            Some(encoded) => Some(STANDARD.decode(encoded.as_bytes()).map_err(|e| {
+                crate::error::Error::Parse {
+                    message: format!("Invalid base64 in video bytes: {e}"),
+                }
+            })?),
+            None => None,
+        };
     let mime_type = obj
         .get(mime_key)
         .and_then(Value::as_str)

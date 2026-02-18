@@ -216,7 +216,10 @@ impl Operations {
         })?;
 
         let value = match backend {
-            Backend::GeminiApi => self.get_operation_value(&name, http_options.as_ref()).await?,
+            Backend::GeminiApi => {
+                self.get_operation_value(&name, http_options.as_ref())
+                    .await?
+            }
             Backend::VertexAi => {
                 // Video generation LROs are polled via `:fetchPredictOperation`.
                 let resource_name = name
@@ -227,7 +230,8 @@ impl Operations {
                     self.fetch_predict_operation_value(&name, resource_name, http_options.as_ref())
                         .await?
                 } else {
-                    self.get_operation_value(&name, http_options.as_ref()).await?
+                    self.get_operation_value(&name, http_options.as_ref())
+                        .await?
                 }
             }
         };
@@ -292,7 +296,9 @@ impl Operations {
         let name = operation.name.ok_or_else(|| Error::InvalidConfig {
             message: "Operation name is empty".into(),
         })?;
-        let value = self.get_operation_value(&name, http_options.as_ref()).await?;
+        let value = self
+            .get_operation_value(&name, http_options.as_ref())
+            .await?;
         Ok(serde_json::from_value(value)?)
     }
 
@@ -349,7 +355,9 @@ impl Operations {
         let name = operation.name.ok_or_else(|| Error::InvalidConfig {
             message: "Operation name is empty".into(),
         })?;
-        let value = self.get_operation_value(&name, http_options.as_ref()).await?;
+        let value = self
+            .get_operation_value(&name, http_options.as_ref())
+            .await?;
         Ok(serde_json::from_value(value)?)
     }
 
@@ -488,7 +496,8 @@ impl Operations {
         resource_name: &str,
         http_options: Option<&rust_genai_types::http::HttpOptions>,
     ) -> Result<Value> {
-        fetch_predict_operation_value(&self.inner, operation_name, resource_name, http_options).await
+        fetch_predict_operation_value(&self.inner, operation_name, resource_name, http_options)
+            .await
     }
 
     async fn get_operation_value(

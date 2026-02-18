@@ -123,11 +123,7 @@ async fn test_generate_content_stream_should_return_http_response_rejected() {
 
     let result = client
         .models()
-        .generate_content_stream(
-            "gemini-2.0-flash",
-            vec![Content::text("Test")],
-            config,
-        )
+        .generate_content_stream("gemini-2.0-flash", vec![Content::text("Test")], config)
         .await;
 
     assert!(matches!(result, Err(Error::InvalidConfig { .. })));

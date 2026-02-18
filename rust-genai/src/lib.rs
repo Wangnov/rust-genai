@@ -12,12 +12,12 @@ pub mod documents;
 pub mod error;
 pub mod file_search_stores;
 pub mod files;
+mod http_response;
 pub mod interactions;
 pub mod live;
 pub mod live_music;
 #[cfg(feature = "mcp")]
 pub mod mcp;
-mod http_response;
 pub mod model_capabilities;
 pub mod models;
 pub mod operations;

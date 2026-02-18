@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::caches::{
-    CachedContent, CreateCachedContentConfig, DeleteCachedContentConfig, DeleteCachedContentResponse,
-    GetCachedContentConfig, ListCachedContentsConfig, ListCachedContentsResponse,
-    UpdateCachedContentConfig,
+    CachedContent, CreateCachedContentConfig, DeleteCachedContentConfig,
+    DeleteCachedContentResponse, GetCachedContentConfig, ListCachedContentsConfig,
+    ListCachedContentsResponse, UpdateCachedContentConfig,
 };
 use serde_json::{json, Map, Value};
 

@@ -31,7 +31,8 @@ fn output_video_path() -> PathBuf {
 #[tokio::main]
 async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
-    let operation: GenerateVideosOperation = if let Ok(name) = std::env::var("GENAI_OPERATION_NAME") {
+    let operation: GenerateVideosOperation = if let Ok(name) = std::env::var("GENAI_OPERATION_NAME")
+    {
         GenerateVideosOperation {
             name: Some(name),
             ..Default::default()

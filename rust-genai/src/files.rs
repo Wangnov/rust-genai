@@ -9,7 +9,9 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use crate::client::Credentials;
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
-use crate::http_response::{sdk_http_response_from_headers, sdk_http_response_from_headers_and_body};
+use crate::http_response::{
+    sdk_http_response_from_headers, sdk_http_response_from_headers_and_body,
+};
 use crate::upload;
 #[cfg(test)]
 use crate::upload::CHUNK_SIZE;
@@ -181,8 +183,13 @@ impl Files {
             )
             .await?;
         let mut file_handle = tokio::fs::File::open(path).await?;
-        self.upload_reader(&upload_url, &mut file_handle, size_bytes, http_options.as_ref())
-            .await
+        self.upload_reader(
+            &upload_url,
+            &mut file_handle,
+            size_bytes,
+            http_options.as_ref(),
+        )
+        .await
     }
 
     /// 下载文件（返回字节内容）。
@@ -1034,10 +1041,7 @@ mod tests {
                 file,
                 CreateFileConfig {
                     http_options: Some(rust_genai_types::http::HttpOptions {
-                        headers: Some(HashMap::from([(
-                            "x-test".to_string(),
-                            "1".to_string(),
-                        )])),
+                        headers: Some(HashMap::from([("x-test".to_string(), "1".to_string())])),
                         extra_body: Some(json!({"extra": "value"})),
                         ..Default::default()
                     }),

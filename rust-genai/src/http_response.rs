@@ -27,7 +27,10 @@ pub(crate) fn sdk_http_response_from_headers(headers: &HeaderMap) -> HttpRespons
     }
 }
 
-pub(crate) fn sdk_http_response_from_headers_and_body(headers: &HeaderMap, body: String) -> HttpResponse {
+pub(crate) fn sdk_http_response_from_headers_and_body(
+    headers: &HeaderMap,
+    body: String,
+) -> HttpResponse {
     let mut response = sdk_http_response_from_headers(headers);
     response.body = Some(body);
     response

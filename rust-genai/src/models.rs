@@ -15,7 +15,8 @@ use rust_genai_types::models::{
     GenerateContentConfig, GenerateContentRequest, GenerateImagesConfig, GenerateImagesResponse,
     GenerateVideosConfig, GenerateVideosOperation, GenerateVideosSource, Image, ListModelsConfig,
     ListModelsResponse, Model, RecontextImageConfig, RecontextImageResponse, RecontextImageSource,
-    ReferenceImage, SegmentImageConfig, SegmentImageResponse, SegmentImageSource, UpdateModelConfig,
+    ReferenceImage, SegmentImageConfig, SegmentImageResponse, SegmentImageSource,
+    UpdateModelConfig,
 };
 use rust_genai_types::response::GenerateContentResponse;
 
@@ -25,7 +26,9 @@ use crate::afc::{
 };
 use crate::client::{Backend, ClientInner};
 use crate::error::{Error, Result};
-use crate::http_response::{sdk_http_response_from_headers, sdk_http_response_from_headers_and_body};
+use crate::http_response::{
+    sdk_http_response_from_headers, sdk_http_response_from_headers_and_body,
+};
 use crate::model_capabilities::{
     validate_code_execution_image_inputs, validate_function_response_media,
 };
@@ -1205,7 +1208,10 @@ impl Models {
             resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
             return Ok(resp);
         }
-        let mut resp = response.json::<DeleteModelResponse>().await.unwrap_or_default();
+        let mut resp = response
+            .json::<DeleteModelResponse>()
+            .await
+            .unwrap_or_default();
         resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(resp)
     }

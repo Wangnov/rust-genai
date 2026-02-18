@@ -6,8 +6,8 @@ use std::time::Duration;
 use reqwest::header::{HeaderName, HeaderValue};
 use rust_genai_types::batches::{
     BatchJob, BatchJobDestination, BatchJobSource, CancelBatchJobConfig, CreateBatchJobConfig,
-    DeleteBatchJobConfig, DeleteResourceJob, GetBatchJobConfig, InlinedRequest, ListBatchJobsConfig,
-    ListBatchJobsResponse,
+    DeleteBatchJobConfig, DeleteResourceJob, GetBatchJobConfig, InlinedRequest,
+    ListBatchJobsConfig, ListBatchJobsResponse,
 };
 use rust_genai_types::enums::JobState;
 use serde_json::{json, Map, Value};
@@ -365,10 +365,7 @@ fn build_batch_job_cancel_url(
     name: &str,
     http_options: Option<&rust_genai_types::http::HttpOptions>,
 ) -> String {
-    format!(
-        "{}:cancel",
-        build_batch_job_url(inner, name, http_options)
-    )
+    format!("{}:cancel", build_batch_job_url(inner, name, http_options))
 }
 
 fn build_batch_list_url(
