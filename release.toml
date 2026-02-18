@@ -1,6 +1,6 @@
 pre-release-replacements = [
-    { file = "README.md", search = 'rust-genai = "[0-9]+\.[0-9]+\.[0-9]+"', replace = 'rust-genai = "{{version}}"', exactly = 2 },
-    { file = "docs/getting-started.md", search = 'rust-genai = "[0-9]+\.[0-9]+\.[0-9]+"', replace = 'rust-genai = "{{version}}"', exactly = 1 },
-    { file = "docs/mcp.md", search = 'rust-genai = \{ version = "[0-9]+\.[0-9]+\.[0-9]+", features = \["mcp"\] \}', replace = 'rust-genai = { version = "{{version}}", features = ["mcp"] }', exactly = 1 },
-    { file = "docs/best-practices.md", search = 'rust-genai = "[0-9]+\.[0-9]+\.[0-9]+"', replace = 'rust-genai = "{{version}}"', exactly = 1 },
+    { file = "../README.md", search = 'rust-genai = "[0-9]+\.[0-9]+\.[0-9]+"', replace = 'rust-genai = "{{version}}"', exactly = 2 },
+    { file = "../docs/getting-started.md", search = 'rust-genai = "[0-9]+\.[0-9]+\.[0-9]+"', replace = 'rust-genai = "{{version}}"', exactly = 1 },
+    { file = "../docs/mcp.md", search = 'rust-genai = \{ version = "[0-9]+\.[0-9]+\.[0-9]+", features = \["mcp"\] \}', replace = 'rust-genai = { version = "{{version}}", features = ["mcp"] }', exactly = 1 },
+    { file = "../docs/best-practices.md", search = 'rust-genai = "[0-9]+\.[0-9]+\.[0-9]+"', replace = 'rust-genai = "{{version}}"', exactly = 1 },
 ]
