@@ -1,5 +1,16 @@
 # 最佳实践
 
+## 0. 依赖版本建议
+
+若你会直接复制本文示例，建议先固定 SDK 版本：
+
+```toml
+[dependencies]
+rust-genai = "0.1.1"
+```
+
+> 该版本号会在执行 `cargo release` 时自动同步更新。
+
 ## 1. 使用结构化 Content
 
 优先使用 `Content` 与 `Part` 构建结构化输入，避免手写 JSON。

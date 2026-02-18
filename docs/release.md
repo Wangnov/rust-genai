@@ -32,3 +32,14 @@ cargo release minor --workspace --no-publish --execute
 - `main` 分支 CI 全绿
 - `CRATES_IO_TOKEN` 已配置到 GitHub 仓库 Secret
 - 文档中的依赖示例版本与将发布的版本一致
+
+## 文档版本自动同步
+
+仓库根目录的 `release.toml` 已配置 `pre-release-replacements`，在 `cargo release` 的 `replace` 步骤会自动更新以下文档中的 `rust-genai` 版本号：
+
+- `README.md`（中英文安装片段）
+- `docs/getting-started.md`
+- `docs/mcp.md`
+- `docs/best-practices.md`
+
+建议每次新增“安装/依赖”示例时，同步在 `release.toml` 增加对应替换规则，避免文档版本漂移。
