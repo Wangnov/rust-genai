@@ -68,6 +68,7 @@ async fn main() -> rust_genai::Result<()> {
 - 快速开始：`docs/getting-started.md`
 - 最佳实践：`docs/best-practices.md`
 - MCP：`docs/mcp.md`
+- 发布流程：`docs/release.md`
 - API 文档：`cargo doc --open`
 
 ## 示例
@@ -146,6 +147,7 @@ async fn main() -> rust_genai::Result<()> {
 - Getting Started: `docs/getting-started.md`
 - Best Practices: `docs/best-practices.md`
 - MCP: `docs/mcp.md`
+- Release Flow: `docs/release.md`
 - API Reference: `cargo doc --open`
 
 ## Examples

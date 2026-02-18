@@ -1,6 +1,6 @@
 # Getting Started
 
-本指南介绍如何在 Rust 项目中使用 `genai` SDK 访问 Gemini API 与 Vertex AI。
+本指南介绍如何在 Rust 项目中使用 `rust-genai` SDK 访问 Gemini API 与 Vertex AI。
 
 ## 1. 安装
 

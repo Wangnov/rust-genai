@@ -11,7 +11,7 @@ Gemini 的函数调用系统。实现基于官方 Rust SDK `rmcp`。
 启用方式：
 
 ```toml
-rust-genai = { version = "1.0.0", features = ["mcp"] }
+rust-genai = { version = "0.1.1", features = ["mcp"] }
 ```
 
 ## 使用方式
