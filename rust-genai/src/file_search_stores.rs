@@ -336,12 +336,13 @@ impl FileSearchStores {
             )
             .await?;
 
-        let mut response = UploadToFileSearchStoreResumableResponse::default();
-        response.sdk_http_response = Some(if should_return_http_response {
-            sdk_http_response_from_headers_and_body(&headers, text)
-        } else {
-            sdk_http_response_from_headers(&headers)
-        });
+        let response = UploadToFileSearchStoreResumableResponse {
+            sdk_http_response: Some(if should_return_http_response {
+                sdk_http_response_from_headers_and_body(&headers, text)
+            } else {
+                sdk_http_response_from_headers(&headers)
+            }),
+        };
         Ok(response)
     }
 
@@ -1017,7 +1018,7 @@ mod tests {
             .unwrap();
         let sdk = resp.sdk_http_response.unwrap();
         let headers = sdk.headers.unwrap();
-        assert!(headers.get("x-goog-upload-url").is_some());
+        assert!(headers.contains_key("x-goog-upload-url"));
         assert_eq!(sdk.body.as_deref(), Some("raw-body"));
     }
 

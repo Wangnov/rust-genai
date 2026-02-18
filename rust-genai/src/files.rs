@@ -92,12 +92,13 @@ impl Files {
             .start_resumable_upload(file, size_bytes, &mime_type, None, http_options.as_ref())
             .await?;
 
-        let mut response = CreateFileResponse::default();
-        response.sdk_http_response = Some(if should_return_http_response {
-            sdk_http_response_from_headers_and_body(&headers, text)
-        } else {
-            sdk_http_response_from_headers(&headers)
-        });
+        let response = CreateFileResponse {
+            sdk_http_response: Some(if should_return_http_response {
+                sdk_http_response_from_headers_and_body(&headers, text)
+            } else {
+                sdk_http_response_from_headers(&headers)
+            }),
+        };
         Ok(response)
     }
 
@@ -431,15 +432,16 @@ impl Files {
         let headers = response.headers().clone();
         let text = response.text().await.unwrap_or_default();
         if should_return_http_response {
-            let mut result = RegisterFilesResponse::default();
-            result.sdk_http_response =
-                Some(sdk_http_response_from_headers_and_body(&headers, text));
-            return Ok(result);
+            return Ok(RegisterFilesResponse {
+                sdk_http_response: Some(sdk_http_response_from_headers_and_body(&headers, text)),
+                ..Default::default()
+            });
         }
         if text.trim().is_empty() {
-            let mut result = RegisterFilesResponse::default();
-            result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
-            return Ok(result);
+            return Ok(RegisterFilesResponse {
+                sdk_http_response: Some(sdk_http_response_from_headers(&headers)),
+                ..Default::default()
+            });
         }
         let mut result: RegisterFilesResponse = serde_json::from_str(&text)?;
         result.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
@@ -1053,7 +1055,7 @@ mod tests {
 
         let sdk = response.sdk_http_response.unwrap();
         let headers = sdk.headers.unwrap();
-        assert!(headers.get("x-goog-upload-url").is_some());
+        assert!(headers.contains_key("x-goog-upload-url"));
         assert_eq!(sdk.body.as_deref(), Some("raw-body"));
 
         let received = server.received_requests().await.unwrap();

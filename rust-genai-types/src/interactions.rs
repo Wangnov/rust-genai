@@ -7,6 +7,7 @@ use crate::http::HttpOptions;
 /// Interactions 输入（支持文本、内容列表或完整 turns）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum InteractionInput {
     Text(String),
     Content(InteractionContent),

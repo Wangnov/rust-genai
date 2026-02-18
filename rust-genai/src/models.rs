@@ -1204,8 +1204,9 @@ impl Models {
         }
         let headers = response.headers().clone();
         if response.content_length().unwrap_or(0) == 0 {
-            let mut resp = DeleteModelResponse::default();
-            resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
+            let resp = DeleteModelResponse {
+                sdk_http_response: Some(sdk_http_response_from_headers(&headers)),
+            };
             return Ok(resp);
         }
         let mut resp = response
