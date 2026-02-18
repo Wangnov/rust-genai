@@ -22,7 +22,7 @@ quote = { workspace = true }
 syn = { workspace = true }
 
 [dev-dependencies]
-rust_genai = { package = "rust-genai", path = "../rust-genai", version = "0.1.1" }
-rust-genai-types = { path = "../rust-genai-types", version = "0.1.1" }
+rust_genai = { package = "rust-genai", path = "../rust-genai", version = "0.2.0" }
+rust-genai-types = { path = "../rust-genai-types", version = "0.2.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
