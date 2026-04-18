@@ -26,7 +26,7 @@ fn example_input_audio() -> PathBuf {
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = Client::from_env()?;
-    let model = "gemini-2.5-flash-native-audio-preview-12-2025";
+    let model = "gemini-3.1-flash-live-preview";
 
     let config = build_live_config();
 

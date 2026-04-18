@@ -15,7 +15,7 @@ async fn generate_content_with_callable_tools_flow() {
     let counter_clone = counter.clone();
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path("/v1beta/models/gemini-2.5-flash:generateContent"))
         .respond_with(move |_req: &Request| {
             let call_index = counter_clone.fetch_add(1, Ordering::SeqCst);
             if call_index == 0 {
@@ -63,7 +63,7 @@ async fn generate_content_with_callable_tools_flow() {
     let response = client
         .models()
         .generate_content_with_callable_tools(
-            "gemini-2.0-flash",
+            "gemini-2.5-flash",
             vec![types::content::Content::text("calc")],
             types::models::GenerateContentConfig::default(),
             vec![Box::new(tool)],

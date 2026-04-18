@@ -11,7 +11,7 @@ async fn main() -> rust_genai::Result<()> {
             ..Default::default()
         }),
         live_connect_constraints: Some(LiveConnectConstraints {
-            model: Some("gemini-2.5-flash".into()),
+            model: Some("gemini-3-flash-preview".into()),
             ..Default::default()
         }),
         ..Default::default()

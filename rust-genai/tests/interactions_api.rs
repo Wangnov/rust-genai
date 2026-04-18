@@ -3,7 +3,7 @@ use serde_json::json;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use rust_genai::types::interactions::CreateInteractionConfig;
+use rust_genai::types::interactions::{CreateInteractionConfig, WebhookConfig};
 
 mod support;
 use support::build_gemini_client_with_version;
@@ -15,18 +15,18 @@ async fn interactions_api_flow() {
     Mock::given(method("POST"))
         .and(path("/v1beta/interactions"))
         .and(body_json(
-            json!({"model": "gemini-2.0-flash", "input": "hi"}),
+            json!({"model": "gemini-3-flash-preview", "input": "hi"}),
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "int_1",
-            "model": "gemini-2.0-flash"
+            "model": "gemini-3-flash-preview"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/v1beta/interactions"))
-        .and(body_json(json!({"model": "gemini-2.0-flash", "input": "hi", "stream": true})))
+        .and(body_json(json!({"model": "gemini-3-flash-preview", "input": "hi", "stream": true})))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -42,7 +42,7 @@ async fn interactions_api_flow() {
         .and(path("/v1beta/interactions/int_1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "int_1",
-            "model": "gemini-2.0-flash"
+            "model": "gemini-3-flash-preview"
         })))
         .mount(&server)
         .await;
@@ -57,7 +57,7 @@ async fn interactions_api_flow() {
         .and(path("/v1beta/interactions/int_1/cancel"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "int_1",
-            "model": "gemini-2.0-flash"
+            "model": "gemini-3-flash-preview"
         })))
         .mount(&server)
         .await;
@@ -66,13 +66,13 @@ async fn interactions_api_flow() {
     let interactions = client.interactions();
 
     let created = interactions
-        .create(CreateInteractionConfig::new("gemini-2.0-flash", "hi"))
+        .create(CreateInteractionConfig::new("gemini-3-flash-preview", "hi"))
         .await
         .unwrap();
     assert_eq!(created.id.as_deref(), Some("int_1"));
 
     let mut stream = interactions
-        .create_stream(CreateInteractionConfig::new("gemini-2.0-flash", "hi"))
+        .create_stream(CreateInteractionConfig::new("gemini-3-flash-preview", "hi"))
         .await
         .unwrap();
     let mut saw_event = false;
@@ -119,7 +119,7 @@ async fn interactions_error_responses_and_empty_body() {
     let interactions = client.interactions();
 
     let err = interactions
-        .create(CreateInteractionConfig::new("gemini-2.0-flash", "hi"))
+        .create(CreateInteractionConfig::new("gemini-3-flash-preview", "hi"))
         .await
         .unwrap_err();
     assert!(matches!(err, rust_genai::Error::ApiError { .. }));
@@ -132,4 +132,40 @@ async fn interactions_error_responses_and_empty_body() {
         err,
         rust_genai::Error::Serialization { .. } | rust_genai::Error::Parse { .. }
     ));
+}
+
+#[tokio::test]
+async fn interactions_create_supports_webhook_config() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/interactions"))
+        .and(body_json(json!({
+            "model": "gemini-3-flash-preview",
+            "input": "hi",
+            "webhook_config": {
+                "uris": ["https://example.com/webhook"],
+                "user_metadata": {"job_id": "int_1"}
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "int_1",
+            "model": "gemini-3-flash-preview"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = build_gemini_client_with_version(&server.uri(), "v1beta");
+    let created = client
+        .interactions()
+        .create(CreateInteractionConfig {
+            webhook_config: Some(WebhookConfig {
+                uris: Some(vec!["https://example.com/webhook".to_string()]),
+                user_metadata: Some([("job_id".to_string(), json!("int_1"))].into()),
+            }),
+            ..CreateInteractionConfig::new("gemini-3-flash-preview", "hi")
+        })
+        .await
+        .unwrap();
+    assert_eq!(created.id.as_deref(), Some("int_1"));
 }

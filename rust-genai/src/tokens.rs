@@ -419,7 +419,7 @@ mod tests {
             "bidiGenerateContentSetup".to_string(),
             json!({
                 "setup": {
-                    "model": "models/gemini-2.0-flash",
+                    "model": "models/gemini-3-flash-preview",
                     "generationConfig": { "temperature": 0.7, "topP": 0.9 }
                 }
             }),
@@ -480,7 +480,7 @@ mod tests {
             new_session_expire_time: None,
             uses: Some(2),
             live_connect_constraints: Some(LiveConnectConstraints {
-                model: Some("gemini-2.0-flash".into()),
+                model: Some("gemini-3-flash-preview".into()),
                 config: Some(LiveConnectConfig {
                     response_modalities: Some(vec![Modality::Text]),
                     temperature: Some(0.4),
@@ -580,12 +580,12 @@ mod tests {
     #[test]
     fn test_normalize_model_name() {
         assert_eq!(
-            normalize_model_name("models/gemini-2.0-flash"),
-            "models/gemini-2.0-flash"
+            normalize_model_name("models/gemini-3-flash-preview"),
+            "models/gemini-3-flash-preview"
         );
         assert_eq!(
-            normalize_model_name("gemini-2.0-flash"),
-            "models/gemini-2.0-flash"
+            normalize_model_name("gemini-3-flash-preview"),
+            "models/gemini-3-flash-preview"
         );
     }
 
@@ -632,7 +632,7 @@ mod tests {
         let mut body = Map::new();
         body.insert(
             "bidiGenerateContentSetup".to_string(),
-            json!({"setup": {"model": "models/gemini-2.0-flash"}}),
+            json!({"setup": {"model": "models/gemini-3-flash-preview"}}),
         );
         body.insert("fieldMask".to_string(), json!(["model"]));
         let result = convert_bidi_setup_to_token_setup(body, None);
@@ -737,14 +737,17 @@ mod tests {
     #[test]
     fn test_build_live_setup_for_constraints() {
         let constraints = LiveConnectConstraints {
-            model: Some("gemini-2.0-flash".into()),
+            model: Some("gemini-3-flash-preview".into()),
             config: Some(LiveConnectConfig {
                 response_modalities: Some(vec![Modality::Text]),
                 ..Default::default()
             }),
         };
         let setup = build_live_setup_for_constraints(&constraints);
-        assert_eq!(setup.model.as_deref(), Some("models/gemini-2.0-flash"));
+        assert_eq!(
+            setup.model.as_deref(),
+            Some("models/gemini-3-flash-preview")
+        );
         assert!(setup.generation_config.is_some());
     }
 

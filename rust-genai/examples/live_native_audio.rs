@@ -29,7 +29,7 @@ async fn main() -> rust_genai::Result<()> {
 
     let mut session = client
         .live()
-        .connect("gemini-2.5-flash-native-audio-preview-12-2025", config)
+        .connect("gemini-3.1-flash-live-preview", config)
         .await?;
 
     session.send_text("请用中文朗读一句欢迎词。").await?;

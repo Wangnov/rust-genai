@@ -43,7 +43,7 @@ async fn main() -> rust_genai::Result<()> {
     let response = client
         .models()
         .generate_content_with_config(
-            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
             vec![Content::text("列出仓库的 git 状态")],
             config,
         )
@@ -59,7 +59,7 @@ async fn main() -> rust_genai::Result<()> {
     let followup = client
         .models()
         .generate_content_with_config(
-            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
             vec![Content::from_parts(parts, Role::Function)],
             GenerateContentConfig::default(),
         )

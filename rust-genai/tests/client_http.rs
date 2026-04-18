@@ -46,3 +46,30 @@ async fn api_key_header_respects_custom_value() {
     let models = client.models();
     let _ = models.list().await.unwrap();
 }
+
+#[tokio::test]
+async fn sdk_usage_header_is_inserted() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1beta/models"))
+        .and(header(
+            "x-goog-api-client",
+            concat!(
+                "google-genai-sdk/",
+                env!("CARGO_PKG_VERSION"),
+                " gl-rust/unknown"
+            ),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": []
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+    let _ = client.models().list().await.unwrap();
+}

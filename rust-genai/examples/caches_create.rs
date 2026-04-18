@@ -11,7 +11,10 @@ async fn main() -> rust_genai::Result<()> {
         contents: Some(vec![Content::text(long_text)]),
         ..Default::default()
     };
-    let cache = client.caches().create("gemini-2.5-flash", config).await?;
+    let cache = client
+        .caches()
+        .create("gemini-3-flash-preview", config)
+        .await?;
     println!("cache: {:?}", cache.name);
     Ok(())
 }

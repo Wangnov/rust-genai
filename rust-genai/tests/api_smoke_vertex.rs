@@ -71,19 +71,19 @@ async fn api_smoke_vertex_models_text() {
 
     models.list().await.unwrap();
     models
-        .get("publishers/google/models/gemini-2.0-flash")
+        .get("publishers/google/models/gemini-3-flash-preview")
         .await
         .unwrap();
     models
         .generate_content(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
         )
         .await
         .unwrap();
     let mut stream = models
         .generate_content_stream(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
             types::models::GenerateContentConfig::default(),
         )
@@ -92,21 +92,21 @@ async fn api_smoke_vertex_models_text() {
     stream.next().await.unwrap().unwrap();
     models
         .embed_content(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
         )
         .await
         .unwrap();
     models
         .count_tokens(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
         )
         .await
         .unwrap();
     models
         .compute_tokens(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
         )
         .await
@@ -197,7 +197,7 @@ async fn api_smoke_vertex_caches() {
 
     caches
         .create(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             types::caches::CreateCachedContentConfig {
                 kms_key_name: Some("kms/key".into()),
                 contents: Some(vec![types::content::Content::text("cache")]),
@@ -230,7 +230,7 @@ async fn api_smoke_vertex_batches() {
 
     batches
         .create(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             types::batches::BatchJobSource {
                 format: Some("jsonl".into()),
                 gcs_uri: Some(vec!["gs://input".into()]),
@@ -261,7 +261,7 @@ async fn api_smoke_vertex_tunings_and_operations() {
     let tunings = client.tunings();
     tunings
         .tune(
-            "publishers/google/models/gemini-2.0-flash",
+            "publishers/google/models/gemini-3-flash-preview",
             types::tunings::TuningDataset {
                 gcs_uri: Some("gs://train".into()),
                 ..Default::default()
@@ -290,7 +290,7 @@ async fn api_smoke_vertex_gemini_only_rejections() {
     assert!(client
         .interactions()
         .create(types::interactions::CreateInteractionConfig::new(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             "hello",
         ))
         .await

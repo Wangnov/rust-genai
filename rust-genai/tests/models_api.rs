@@ -35,7 +35,9 @@ async fn test_generate_content_gemini_api() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:generateContent",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&mock_server)
         .await;
@@ -44,7 +46,7 @@ async fn test_generate_content_gemini_api() {
 
     let response = client
         .models()
-        .generate_content("gemini-2.0-flash", vec![Content::text("Test")])
+        .generate_content("gemini-3-flash-preview", vec![Content::text("Test")])
         .await
         .unwrap();
     assert_eq!(response.text(), Some("Hello".to_string()));
@@ -67,7 +69,9 @@ async fn test_generate_content_should_return_http_response() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:generateContent",
+        ))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("x-test", "1")
@@ -83,7 +87,11 @@ async fn test_generate_content_should_return_http_response() {
     };
     let response = client
         .models()
-        .generate_content_with_config("gemini-2.0-flash", vec![Content::text("Test")], config)
+        .generate_content_with_config(
+            "gemini-3-flash-preview",
+            vec![Content::text("Test")],
+            config,
+        )
         .await
         .unwrap();
 
@@ -109,7 +117,7 @@ async fn test_generate_content_stream_should_return_http_response_rejected() {
 
     Mock::given(method("POST"))
         .and(path(
-            "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_string("data: [DONE]\n\n"))
         .mount(&mock_server)
@@ -123,7 +131,11 @@ async fn test_generate_content_stream_should_return_http_response_rejected() {
 
     let result = client
         .models()
-        .generate_content_stream("gemini-2.0-flash", vec![Content::text("Test")], config)
+        .generate_content_stream(
+            "gemini-3-flash-preview",
+            vec![Content::text("Test")],
+            config,
+        )
         .await;
 
     assert!(matches!(result, Err(Error::InvalidConfig { .. })));
@@ -139,7 +151,7 @@ async fn test_sse_streaming() {
 
     Mock::given(method("POST"))
         .and(path(
-            "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
         ))
         .respond_with(
             ResponseTemplate::new(200)
@@ -154,7 +166,7 @@ async fn test_sse_streaming() {
     let mut stream = client
         .models()
         .generate_content_stream(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             vec![Content::text("Test")],
             GenerateContentConfig::default(),
         )

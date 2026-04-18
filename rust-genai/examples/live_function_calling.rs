@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
 
 async fn run() -> Result<()> {
     let client = Client::from_env()?;
-    let model = "gemini-2.5-flash-native-audio-preview-12-2025";
+    let model = "gemini-3.1-flash-live-preview";
     let config = build_live_config()?;
 
     println!("连接 Live API 中... (model={model})");
@@ -186,10 +186,8 @@ fn handle_model_turn(
             continue;
         }
         match &part.kind {
-            rust_genai::types::content::PartKind::Text { text } => {
-                if !has_transcription {
-                    emit_text(text, state);
-                }
+            rust_genai::types::content::PartKind::Text { text } if !has_transcription => {
+                emit_text(text, state);
             }
             rust_genai::types::content::PartKind::InlineData { inline_data } => {
                 handle_inline_data(inline_data, state, audio_out_path)?;

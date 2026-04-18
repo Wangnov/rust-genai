@@ -38,7 +38,7 @@ async fn test_compute_tokens_invalid_backend() {
     let client = Client::new("test-key").unwrap();
     let models = client.models();
     let err = models
-        .compute_tokens("gemini-2.0-flash", vec![Content::text("hi")])
+        .compute_tokens("gemini-3-flash-preview", vec![Content::text("hi")])
         .await
         .unwrap_err();
     assert!(matches!(err, Error::InvalidConfig { .. }));
@@ -270,7 +270,7 @@ async fn test_models_vertex_api_methods() {
     let err = gemini
         .models()
         .edit_image(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             "prompt",
             vec![ReferenceImage::default()],
             EditImageConfig::default(),
@@ -307,7 +307,7 @@ async fn test_models_validation_errors() {
     );
     let err = models
         .generate_content_with_config(
-            "gemini-2.0-flash",
+            "gemini-2.5-flash",
             vec![content],
             GenerateContentConfig::default(),
         )
@@ -328,7 +328,7 @@ async fn test_models_validation_errors() {
         Role::User,
     )];
     let err = models
-        .generate_content_with_config("gemini-2.0-flash", contents, config)
+        .generate_content_with_config("gemini-2.5-flash", contents, config)
         .await
         .unwrap_err();
     assert!(matches!(err, Error::InvalidConfig { .. }));

@@ -11,6 +11,7 @@ use crate::enums::{
 use crate::http::{HttpOptions, HttpResponse};
 use crate::operations::OperationError;
 use crate::tool::{Tool, ToolConfig};
+use crate::webhooks::WebhookConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -775,6 +776,8 @@ pub struct GenerateVideosConfig {
     pub mask: Option<VideoGenerationMask>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compression_quality: Option<VideoCompressionQuality>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_config: Option<WebhookConfig>,
 }
 
 /// 生成视频输出。

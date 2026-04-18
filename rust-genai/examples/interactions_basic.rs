@@ -7,7 +7,7 @@ async fn main() -> rust_genai::Result<()> {
     let interactions = client.interactions();
 
     let input = InteractionInput::text("用一句话介绍 Rust 的优势。");
-    let config = CreateInteractionConfig::new("gemini-2.5-flash", input);
+    let config = CreateInteractionConfig::new("gemini-3-flash-preview", input);
     let interaction = interactions.create(config).await?;
 
     println!("{:#?}", interaction.outputs);

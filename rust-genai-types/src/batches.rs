@@ -7,6 +7,7 @@ use crate::enums::JobState;
 use crate::http::{HttpOptions, HttpResponse};
 use crate::models::{EmbedContentConfig, GenerateContentConfig};
 use crate::response::GenerateContentResponse;
+use crate::webhooks::WebhookConfig;
 
 /// 内联请求。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -155,6 +156,8 @@ pub struct CreateBatchJobConfig {
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dest: Option<BatchJobDestination>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_config: Option<WebhookConfig>,
 }
 
 /// Embeddings batch 请求体（仅用于内联）。

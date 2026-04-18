@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-rust-genai = "0.1.1"
+rust-genai = "0.2.0"
 ```
 
 > 该版本号会在执行 `cargo release` 时自动同步更新。
@@ -88,7 +88,7 @@ let spm_estimator = KitokenEstimator::from_sentencepiece_file("path/to/model.mod
 
 // 或者按模型名自动下载（异步）
 #[cfg(feature = "kitoken")]
-let spm_estimator = KitokenEstimator::from_model_name("gemini-2.5-flash").await?;
+let spm_estimator = KitokenEstimator::from_model_name("gemini-3-flash-preview").await?;
 
 // 可选：本地 compute_tokens（文本 / 函数调用 / 函数响应 / 代码执行）
 #[cfg(feature = "kitoken")]
@@ -128,7 +128,7 @@ let config = GenerateContentConfig {
 let response = client
     .models()
     .generate_content_with_callable_tools(
-        "gemini-2.5-flash",
+        "gemini-3-flash-preview",
         vec![Content::text("调用工具")],
         config,
         vec![Box::new(tool)],
@@ -180,7 +180,7 @@ let caches = client.caches().all().await?;
 `ChatSession` 提供 `send` / `send_stream` 作为 `send_message` 的别名：
 
 ```rust
-let chat = client.chats().create("gemini-2.5-flash");
+let chat = client.chats().create("gemini-3-flash-preview");
 let _ = chat.send("hello").await?;
 let _stream = chat.send_stream("streaming hello").await?;
 ```

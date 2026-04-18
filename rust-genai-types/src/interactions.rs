@@ -413,6 +413,16 @@ pub enum AgentConfig {
     DeepResearch(DeepResearchAgentConfig),
 }
 
+/// Message for configuring webhook events for an interaction request.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct WebhookConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_metadata: Option<HashMap<String, Value>>,
+}
+
 /// Create Interaction 配置（请求体）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -448,6 +458,8 @@ pub struct CreateInteractionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_config: Option<WebhookConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
 }
 
@@ -468,6 +480,7 @@ impl CreateInteractionConfig {
             response_mime_type: None,
             response_modalities: None,
             system_instruction: None,
+            webhook_config: None,
             stream: None,
         }
     }
@@ -488,6 +501,7 @@ impl CreateInteractionConfig {
             response_mime_type: None,
             response_modalities: None,
             system_instruction: None,
+            webhook_config: None,
             stream: None,
         }
     }

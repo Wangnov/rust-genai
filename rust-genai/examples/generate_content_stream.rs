@@ -10,7 +10,7 @@ async fn main() -> rust_genai::Result<()> {
     let mut stream = client
         .models()
         .generate_content_stream(
-            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
             vec![Content::text("用三句话介绍 Rust")],
             GenerateContentConfig::default(),
         )

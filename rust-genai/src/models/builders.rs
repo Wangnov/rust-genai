@@ -667,6 +667,17 @@ pub(super) fn build_generate_videos_body(
     if !parameters.is_empty() {
         root.insert("parameters".to_string(), Value::Object(parameters));
     }
+    if let Some(webhook_config) = &config.webhook_config {
+        if backend == Backend::VertexAi {
+            return Err(Error::InvalidConfig {
+                message: "webhook_config parameter is not supported in Vertex AI".into(),
+            });
+        }
+        root.insert(
+            "webhookConfig".to_string(),
+            serde_json::to_value(webhook_config)?,
+        );
+    }
 
     Ok(Value::Object(root))
 }
@@ -697,6 +708,8 @@ mod tests {
         ReferenceImage, ScribbleImage, SegmentImageConfig, SegmentImageSource, UpscaleImageConfig,
         Video, VideoGenerationMask, VideoGenerationReferenceImage,
     };
+    use rust_genai_types::webhooks::WebhookConfig;
+    use serde_json::json;
 
     #[test]
     fn test_build_recontext_image_body() {
@@ -937,6 +950,30 @@ mod tests {
         let params = body.get("parameters").and_then(Value::as_object).unwrap();
         assert_eq!(params.get("sampleCount").and_then(Value::as_i64), Some(2));
         assert!(params.get("pubsubTopic").is_some());
+
+        let gemini_body = build_generate_videos_body(
+            Backend::GeminiApi,
+            &GenerateVideosSource {
+                prompt: Some("video".to_string()),
+                ..Default::default()
+            },
+            &GenerateVideosConfig {
+                webhook_config: Some(WebhookConfig {
+                    uris: Some(vec!["https://example.com/webhook".to_string()]),
+                    user_metadata: Some([("jobId".to_string(), json!("video-123"))].into()),
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            gemini_body
+                .get("webhookConfig")
+                .and_then(|value| value.get("uris"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
     }
 
     #[test]
@@ -1014,6 +1051,15 @@ mod tests {
             ..Default::default()
         };
         assert!(build_generate_videos_body(Backend::GeminiApi, &source, &config).is_err());
+
+        let config = GenerateVideosConfig {
+            webhook_config: Some(WebhookConfig {
+                uris: Some(vec!["https://example.com/webhook".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(build_generate_videos_body(Backend::VertexAi, &source, &config).is_err());
     }
 
     #[test]
