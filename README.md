@@ -42,7 +42,7 @@
 
 ```toml
 [dependencies]
-rust-genai = "0.2.0"
+rust-genai = "0.3.0"
 ```
 
 ## 快速开始
@@ -124,7 +124,7 @@ Current MSRV is Rust 1.88+; the `mcp` feature also requires 1.88+ due to upstrea
 
 ```toml
 [dependencies]
-rust-genai = "0.2.0"
+rust-genai = "0.3.0"
 ```
 
 ## Quickstart
