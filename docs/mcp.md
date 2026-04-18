@@ -11,7 +11,7 @@ Gemini 的函数调用系统。实现基于官方 Rust SDK `rmcp`。
 启用方式：
 
 ```toml
-rust-genai = { version = "0.1.1", features = ["mcp"] }
+rust-genai = { version = "0.2.0", features = ["mcp"] }
 ```
 
 ## 使用方式
@@ -27,7 +27,7 @@ rust-genai = { version = "0.1.1", features = ["mcp"] }
 let response = client
     .models()
     .generate_content_with_callable_tools(
-        "gemini-2.5-flash",
+        "gemini-3-flash-preview",
         vec![Content::text("执行 MCP 工具")],
         GenerateContentConfig::default(),
         vec![Box::new(mcp_tool)],
@@ -60,7 +60,7 @@ let config = GenerateContentConfig {
 };
 let response = client
     .models()
-    .generate_content_with_config("gemini-2.5-flash", vec![Content::text("列出 git 状态")], config)
+    .generate_content_with_config("gemini-3-flash-preview", vec![Content::text("列出 git 状态")], config)
     .await?;
 
 let function_calls: Vec<_> = response.function_calls().into_iter().cloned().collect();
@@ -69,7 +69,7 @@ let parts = mcp_tool.call_tool(&function_calls).await?;
 let followup = client
     .models()
     .generate_content_with_config(
-        "gemini-2.5-flash",
+        "gemini-3-flash-preview",
         vec![Content::from_parts(parts, Role::Function)],
         GenerateContentConfig::default(),
     )

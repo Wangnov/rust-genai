@@ -8,7 +8,7 @@
 
 ```toml
 [dependencies]
-rust-genai = "0.1.1"
+rust-genai = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -33,7 +33,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-2.5-flash", vec![Content::text("你好，Rust!")])
+        .generate_content("gemini-3-flash-preview", vec![Content::text("你好，Rust!")])
         .await?;
 
     println!("{:?}", response.text());
@@ -54,7 +54,7 @@ async fn main() -> rust_genai::Result<()> {
     let mut stream = client
         .models()
         .generate_content_stream(
-            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
             vec![Content::text("用三句话介绍 Rust")],
             Default::default(),
         )
@@ -101,3 +101,12 @@ async fn main() -> rust_genai::Result<()> {
 ```
 
 更多完整示例请见 `rust-genai/examples/` 目录。
+
+## 7. API 版本选择
+
+SDK 默认使用带预览功能覆盖面的 API 版本：
+
+- Gemini Developer API: `v1beta`
+- Vertex AI: `v1beta1`
+
+如果你希望手动切换版本，请查看 `docs/api-versions.md`。

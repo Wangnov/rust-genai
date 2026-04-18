@@ -12,8 +12,8 @@ export GEMINI_API_KEY="YOUR_API_KEY"
 # 在工作区根目录执行
 cargo run -p rust-genai --example generate_content_basic
 
-# 或进入 rust-genai 目录执行
-cd /Users/wangnov/gemini-sdk-evaluation/rust-genai/rust-genai
+# 或进入 rust-genai crate 目录执行
+cd rust-genai
 cargo run --example generate_content_basic
 ```
 
