@@ -186,10 +186,8 @@ fn handle_model_turn(
             continue;
         }
         match &part.kind {
-            rust_genai::types::content::PartKind::Text { text } => {
-                if !has_transcription {
-                    emit_text(text, state);
-                }
+            rust_genai::types::content::PartKind::Text { text } if !has_transcription => {
+                emit_text(text, state);
             }
             rust_genai::types::content::PartKind::InlineData { inline_data } => {
                 handle_inline_data(inline_data, state, audio_out_path)?;
