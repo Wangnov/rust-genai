@@ -446,6 +446,12 @@ fn build_gemini_batch_body(
             Value::String(display_name.clone()),
         );
     }
+    if let Some(webhook_config) = &config.webhook_config {
+        batch.insert(
+            "webhookConfig".to_string(),
+            serde_json::to_value(webhook_config)?,
+        );
+    }
     Ok(Value::Object({
         let mut root = Map::new();
         root.insert("batch".to_string(), Value::Object(batch));
@@ -463,6 +469,11 @@ fn build_vertex_batch_body(
     let dest = config.dest.as_ref().ok_or_else(|| Error::InvalidConfig {
         message: "dest is required for Vertex batch API".into(),
     })?;
+    if config.webhook_config.is_some() {
+        return Err(Error::InvalidConfig {
+            message: "webhook_config parameter is not supported in Vertex AI".into(),
+        });
+    }
     let output_config = build_vertex_output_config(dest)?;
 
     let mut body = Map::new();
@@ -845,6 +856,7 @@ mod tests {
     use rust_genai_types::config::GenerationConfig;
     use rust_genai_types::content::Content;
     use rust_genai_types::models::GenerateContentConfig;
+    use rust_genai_types::webhooks::WebhookConfig;
     use serde_json::json;
     use wiremock::matchers::{method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1073,6 +1085,10 @@ mod tests {
             &src,
             &CreateBatchJobConfig {
                 display_name: Some("batch-name".to_string()),
+                webhook_config: Some(WebhookConfig {
+                    uris: Some(vec!["https://example.com/webhook".to_string()]),
+                    user_metadata: Some([("batchId".to_string(), json!("123"))].into()),
+                }),
                 ..Default::default()
             },
         )
@@ -1091,6 +1107,14 @@ mod tests {
         let request = &reqs[0]["request"];
         assert!(request.get("generationConfig").is_some());
         assert!(reqs[0].get("metadata").is_some());
+        assert_eq!(
+            body.get("batch")
+                .and_then(|v| v.get("webhookConfig"))
+                .and_then(|v| v.get("uris"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
     }
 
     #[test]
@@ -1196,6 +1220,30 @@ mod tests {
                 ..Default::default()
             },
             &CreateBatchJobConfig::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidConfig { .. }));
+
+        let err = build_vertex_batch_body(
+            &inner,
+            "models/1",
+            &BatchJobSource {
+                format: Some("jsonl".to_string()),
+                gcs_uri: Some(vec!["gs://input".to_string()]),
+                ..Default::default()
+            },
+            &CreateBatchJobConfig {
+                dest: Some(BatchJobDestination {
+                    format: Some("jsonl".to_string()),
+                    gcs_uri: Some("gs://out".to_string()),
+                    ..Default::default()
+                }),
+                webhook_config: Some(WebhookConfig {
+                    uris: Some(vec!["https://example.com/webhook".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
         )
         .unwrap_err();
         assert!(matches!(err, Error::InvalidConfig { .. }));

@@ -27,6 +27,7 @@ pub mod tokenizer;
 pub mod tokens;
 pub mod tunings;
 mod upload;
+pub mod webhooks;
 
 #[cfg(test)]
 mod test_support;

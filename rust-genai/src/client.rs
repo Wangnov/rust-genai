@@ -17,6 +17,13 @@ use google_cloud_auth::credentials::{
 use http::Extensions;
 use rust_genai_types::http::HttpRetryOptions;
 
+const X_GOOG_API_CLIENT_HEADER: &str = "x-goog-api-client";
+const SDK_USAGE_HEADER_VALUE: &str = concat!(
+    "google-genai-sdk/",
+    env!("CARGO_PKG_VERSION"),
+    " gl-rust/unknown"
+);
+
 /// Gemini 客户端。
 #[derive(Clone)]
 pub struct Client {
@@ -256,6 +263,12 @@ impl Client {
     #[must_use]
     pub fn interactions(&self) -> crate::interactions::Interactions {
         crate::interactions::Interactions::new(self.inner.clone())
+    }
+
+    /// 访问 Webhooks API。
+    #[must_use]
+    pub fn webhooks(&self) -> crate::webhooks::Webhooks {
+        crate::webhooks::Webhooks::new(self.inner.clone())
     }
 
     /// 访问 Deep Research。
@@ -732,6 +745,9 @@ impl ClientInner {
                 request.headers_mut().insert(name.clone(), value);
             }
         }
+        if self.config.backend == Backend::GeminiApi {
+            append_sdk_usage_header(request.headers_mut())?;
+        }
         #[cfg(feature = "mcp")]
         crate::mcp::append_mcp_usage_header(request.headers_mut())?;
         Ok(())
@@ -746,6 +762,40 @@ impl ClientInner {
         let headers = provider.headers(&scopes).await?;
         Ok(Some(headers))
     }
+}
+
+fn append_sdk_usage_header(headers: &mut HeaderMap) -> Result<()> {
+    let header_name = HeaderName::from_static(X_GOOG_API_CLIENT_HEADER);
+    let existing_values = headers
+        .get_all(&header_name)
+        .iter()
+        .map(|value| {
+            value
+                .to_str()
+                .map(str::trim)
+                .map(str::to_string)
+                .map_err(|_| Error::InvalidConfig {
+                    message: "Invalid x-goog-api-client header value".into(),
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let existing = existing_values
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let combined = if existing.contains(SDK_USAGE_HEADER_VALUE) {
+        existing
+    } else if existing.is_empty() {
+        SDK_USAGE_HEADER_VALUE.to_string()
+    } else {
+        format!("{SDK_USAGE_HEADER_VALUE} {existing}")
+    };
+    let value = HeaderValue::from_str(&combined).map_err(|_| Error::InvalidConfig {
+        message: "Invalid x-goog-api-client header value".into(),
+    })?;
+    headers.insert(header_name, value);
+    Ok(())
 }
 
 fn retry_delay_secs(options: &HttpRetryOptions, retry_index: u32) -> f64 {
@@ -1088,5 +1138,38 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(client.inner.config.auth_scopes, vec!["scope-1".to_string()]);
+    }
+
+    #[test]
+    fn test_append_sdk_usage_header() {
+        let mut headers = HeaderMap::new();
+        append_sdk_usage_header(&mut headers).unwrap();
+        assert_eq!(
+            headers
+                .get(X_GOOG_API_CLIENT_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some(SDK_USAGE_HEADER_VALUE)
+        );
+    }
+
+    #[test]
+    fn test_append_sdk_usage_header_preserves_existing_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(X_GOOG_API_CLIENT_HEADER),
+            HeaderValue::from_static("custom-client/1.0.0"),
+        );
+        append_sdk_usage_header(&mut headers).unwrap();
+        append_sdk_usage_header(&mut headers).unwrap();
+        assert_eq!(
+            headers
+                .get(X_GOOG_API_CLIENT_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some(concat!(
+                "google-genai-sdk/",
+                env!("CARGO_PKG_VERSION"),
+                " gl-rust/unknown custom-client/1.0.0"
+            ))
+        );
     }
 }
