@@ -124,15 +124,13 @@ fn has_image_inputs(contents: &[Content]) -> bool {
     for content in contents {
         for part in &content.parts {
             match &part.kind {
-                PartKind::InlineData { inline_data } => {
-                    if inline_data.mime_type.starts_with("image/") {
-                        return true;
-                    }
+                PartKind::InlineData { inline_data }
+                    if inline_data.mime_type.starts_with("image/") =>
+                {
+                    return true;
                 }
-                PartKind::FileData { file_data } => {
-                    if file_data.mime_type.starts_with("image/") {
-                        return true;
-                    }
+                PartKind::FileData { file_data } if file_data.mime_type.starts_with("image/") => {
+                    return true;
                 }
                 _ => {}
             }

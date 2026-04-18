@@ -798,10 +798,8 @@ pub mod kitoken {
 
     fn add_json_texts(value: &serde_json::Value, texts: &mut Vec<String>) {
         match value {
-            serde_json::Value::String(value) => {
-                if !value.is_empty() {
-                    texts.push(value.clone());
-                }
+            serde_json::Value::String(value) if !value.is_empty() => {
+                texts.push(value.clone());
             }
             serde_json::Value::Array(values) => {
                 for item in values {

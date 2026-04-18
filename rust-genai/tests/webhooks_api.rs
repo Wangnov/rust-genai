@@ -5,6 +5,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use rust_genai::types::webhooks::{
     CreateWebhookConfig, ListWebhooksConfig, RotateWebhookSigningSecretConfig, UpdateWebhookConfig,
 };
+use rust_genai::Error;
 
 mod support;
 use support::build_gemini_client_with_version;
@@ -169,4 +170,133 @@ async fn webhooks_api_flow() {
     assert_eq!(rotated.secret.as_deref(), Some("secret-2"));
 
     webhooks.delete("hook-1").await.unwrap();
+}
+
+#[tokio::test]
+async fn webhooks_error_responses_and_default_rotate_wrapper() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/webhooks"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("create failed"))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("PATCH"))
+        .and(path("/v1beta/webhooks/hook-1"))
+        .respond_with(ResponseTemplate::new(422).set_body_string("update failed"))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/webhooks"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("list failed"))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/webhooks/hook-1"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("get failed"))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/webhooks/hook-1:ping"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("ping failed"))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/webhooks/hook-1:rotateSigningSecret"))
+        .and(body_json(json!({})))
+        .respond_with(ResponseTemplate::new(409).set_body_string("rotate failed"))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/v1beta/webhooks/hook-1"))
+        .respond_with(ResponseTemplate::new(410).set_body_string("delete failed"))
+        .mount(&server)
+        .await;
+
+    let client = build_gemini_client_with_version(&server.uri(), "v1beta");
+    let webhooks = client.webhooks();
+
+    let err = webhooks
+        .create(CreateWebhookConfig::new(
+            "https://example.com/webhook",
+            vec!["batch.succeeded".to_string()],
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::ApiError {
+            status: 400,
+            message
+        } if message == "create failed"
+    ));
+
+    let err = webhooks
+        .update(
+            "hook-1",
+            UpdateWebhookConfig::new(
+                "https://example.com/webhook-updated",
+                vec!["interaction.completed".to_string()],
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::ApiError {
+            status: 422,
+            message
+        } if message == "update failed"
+    ));
+
+    let err = webhooks.list().await.unwrap_err();
+    assert!(matches!(
+        err,
+        Error::ApiError {
+            status: 500,
+            message
+        } if message == "list failed"
+    ));
+
+    let err = webhooks.get("hook-1").await.unwrap_err();
+    assert!(matches!(
+        err,
+        Error::ApiError {
+            status: 404,
+            message
+        } if message == "get failed"
+    ));
+
+    let err = webhooks.ping("hook-1").await.unwrap_err();
+    assert!(matches!(
+        err,
+        Error::ApiError {
+            status: 503,
+            message
+        } if message == "ping failed"
+    ));
+
+    let err = webhooks.rotate_signing_secret("hook-1").await.unwrap_err();
+    assert!(matches!(
+        err,
+        Error::ApiError {
+            status: 409,
+            message
+        } if message == "rotate failed"
+    ));
+
+    let err = webhooks.delete("hook-1").await.unwrap_err();
+    assert!(matches!(
+        err,
+        Error::ApiError {
+            status: 410,
+            message
+        } if message == "delete failed"
+    ));
 }
