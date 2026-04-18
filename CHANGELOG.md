@@ -4,21 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-19
+
 ### Added
 - Client: support configurable HTTP retries (global + per-request via `HttpOptions.retry_options`).
+- Client: add a global `x-goog-api-client` SDK header and webhook client surface.
 - Files: support `files:register` (register GCS URIs) for Gemini Developer API with OAuth/ADC.
 - Models: `model_armor_config` support in `GenerateContentConfig` (Vertex AI only).
 - Tunings: `encryption_spec` support in tuning job creation config (Vertex AI only).
 - Tunings: add distillation method + Vertex OSS tuning fields (`tuning_mode`, `custom_base_model`, `output_uri`, teacher model options).
 - Batches: `metadata` field in inlined responses.
+- Webhooks: add webhook request types, verification helpers, and client methods for Gemini API webhook flows.
 - Tokenizer: add `gemini-3-pro-preview` local tokenizer mapping.
 - Interactions: support `include_input` (and related query params) on Get Interaction.
 - Interactions: align create/get streaming with latest SSE event schema (event_id, content delta, error events).
 - Interactions: add agent-based create (`agent`, `agent_config`) and interactions-specific tool + generation config types.
 - Interactions: add `get_stream` / `get_stream_with_config`.
+- Spec sync: add OpenAPI snapshot generation, manifest output, and a scheduled sync workflow.
 
 ### Changed
 - DeepResearch: now uses the Deep Research agent (`deep-research-pro-preview-12-2025`) with `agent` / `agent_config` (instead of `model`).
+- Docs: refresh installation snippets, official source references, API version guidance, and model examples across the docs set.
+- Examples and tests: refresh default Gemini models and coverage for the latest SDK-facing surfaces.
 
 ## [0.1.0] - 2025-12-26
 
