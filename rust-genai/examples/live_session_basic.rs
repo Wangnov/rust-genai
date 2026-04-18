@@ -22,7 +22,7 @@ async fn main() {
 async fn run() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let model = std::env::var("GENAI_LIVE_MODEL")
-        .unwrap_or_else(|_| "gemini-2.5-flash-native-audio-preview-12-2025".to_string());
+        .unwrap_or_else(|_| "gemini-3.1-flash-live-preview".to_string());
     let response_timeout_secs: u64 = std::env::var("GENAI_LIVE_RESPONSE_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.parse().ok())

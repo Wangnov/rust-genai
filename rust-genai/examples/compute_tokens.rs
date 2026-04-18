@@ -7,7 +7,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::new_vertex("YOUR_PROJECT", "us-central1")?;
     let response = client
         .models()
-        .compute_tokens("gemini-2.5-flash", vec![Content::text("hello")])
+        .compute_tokens("gemini-3-flash-preview", vec![Content::text("hello")])
         .await?;
     println!("{:?}", response.tokens_info);
     Ok(())

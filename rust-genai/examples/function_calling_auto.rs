@@ -56,7 +56,7 @@ async fn main() -> rust_genai::Result<()> {
     let response = client
         .models()
         .generate_content_with_callable_tools(
-            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
             vec![Content::text("计算 2.5 + 3.1")],
             config,
             vec![Box::new(add_tool)],

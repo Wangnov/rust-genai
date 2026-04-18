@@ -42,7 +42,7 @@
 
 ```toml
 [dependencies]
-rust-genai = "0.1.1"
+rust-genai = "0.2.0"
 ```
 
 ## 快速开始
@@ -56,7 +56,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-2.5-flash", vec![Content::text("你好，Rust!")])
+        .generate_content("gemini-3-flash-preview", vec![Content::text("你好，Rust!")])
         .await?;
     println!("{response:?}");
     Ok(())
@@ -66,6 +66,9 @@ async fn main() -> rust_genai::Result<()> {
 ## 文档
 
 - 快速开始：`docs/getting-started.md`
+- API 版本：`docs/api-versions.md`
+- 官方来源清单：`docs/official-sources.md`
+- 规范同步：`docs/spec-sync.md`
 - 最佳实践：`docs/best-practices.md`
 - MCP：`docs/mcp.md`
 - 发布流程：`docs/release.md`
@@ -121,7 +124,7 @@ Current MSRV is Rust 1.88+; the `mcp` feature also requires 1.88+ due to upstrea
 
 ```toml
 [dependencies]
-rust-genai = "0.1.1"
+rust-genai = "0.2.0"
 ```
 
 ## Quickstart
@@ -135,7 +138,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-2.5-flash", vec![Content::text("Hello from Rust!")])
+        .generate_content("gemini-3-flash-preview", vec![Content::text("Hello from Rust!")])
         .await?;
     println!("{response:?}");
     Ok(())
@@ -145,6 +148,9 @@ async fn main() -> rust_genai::Result<()> {
 ## Documentation
 
 - Getting Started: `docs/getting-started.md`
+- API Versions: `docs/api-versions.md`
+- Official Sources: `docs/official-sources.md`
+- Spec Sync: `docs/spec-sync.md`
 - Best Practices: `docs/best-practices.md`
 - MCP: `docs/mcp.md`
 - Release Flow: `docs/release.md`

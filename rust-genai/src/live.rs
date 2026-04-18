@@ -786,8 +786,11 @@ mod tests {
             temperature: Some(0.5),
             ..LiveConnectConfig::default()
         };
-        let setup = build_live_setup("gemini-2.0-flash", &config);
-        assert_eq!(setup.model.as_deref(), Some("models/gemini-2.0-flash"));
+        let setup = build_live_setup("gemini-3.1-flash-live-preview", &config);
+        assert_eq!(
+            setup.model.as_deref(),
+            Some("models/gemini-3.1-flash-live-preview")
+        );
         assert!(setup.generation_config.is_some());
 
         let (url, headers) =
@@ -803,8 +806,8 @@ mod tests {
             Some("key"),
         ));
         let live = Live::new(inner);
-        let builder = live.builder("gemini-2.0-flash");
-        assert_eq!(builder.model, "gemini-2.0-flash");
+        let builder = live.builder("gemini-3.1-flash-live-preview");
+        assert_eq!(builder.model, "gemini-3.1-flash-live-preview");
         let _music = live.music();
     }
 
@@ -855,8 +858,8 @@ mod tests {
     #[test]
     fn test_normalize_model_name_with_prefix() {
         assert_eq!(
-            normalize_model_name("models/gemini-2.0-flash"),
-            "models/gemini-2.0-flash"
+            normalize_model_name("models/gemini-3.1-flash-live-preview"),
+            "models/gemini-3.1-flash-live-preview"
         );
     }
 
@@ -1005,7 +1008,7 @@ mod tests {
             Backend::GeminiApi,
             Some("key"),
         ));
-        let builder = LiveSessionBuilder::new(inner, "gemini-2.0-flash".to_string())
+        let builder = LiveSessionBuilder::new(inner, "gemini-3.1-flash-live-preview".to_string())
             .with_system_instruction("sys")
             .with_tools(vec![Tool::default()])
             .with_generation_config(GenerationConfig::default())
@@ -1017,7 +1020,7 @@ mod tests {
             .with_input_audio_transcription(AudioTranscriptionConfig::default())
             .with_output_audio_transcription(AudioTranscriptionConfig::default());
 
-        assert_eq!(builder.model, "gemini-2.0-flash");
+        assert_eq!(builder.model, "gemini-3.1-flash-live-preview");
         assert!(builder.config.system_instruction.is_some());
         assert!(builder.config.tools.is_some());
         assert!(builder.config.generation_config.is_some());

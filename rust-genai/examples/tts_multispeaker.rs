@@ -102,7 +102,7 @@ async fn main() -> rust_genai::Result<()> {
 
     let response = models
         .generate_content_with_config(
-            "gemini-2.5-flash-preview-tts",
+            "gemini-3.1-flash-tts-preview",
             vec![Content::text("Alice: 你好！\nBob: 很高兴见到你。")],
             config,
         )

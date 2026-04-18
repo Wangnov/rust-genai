@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
 
 async fn run() -> Result<()> {
     let client = Client::from_env()?;
-    let model = "gemini-2.5-flash-native-audio-preview-12-2025";
+    let model = "gemini-3.1-flash-live-preview";
     let config = build_live_config()?;
 
     println!("连接 Live API 中... (model={model})");

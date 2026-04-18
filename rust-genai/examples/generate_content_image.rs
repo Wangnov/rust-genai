@@ -41,7 +41,7 @@ async fn main() -> rust_genai::Result<()> {
     let response = client
         .models()
         .generate_content_with_config(
-            "gemini-2.5-flash-image",
+            "gemini-3.1-flash-image-preview",
             vec![Content::text(
                 "Create a picture of a nano banana dish in a fancy restaurant with a Gemini theme",
             )],

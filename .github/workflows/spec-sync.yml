@@ -1,0 +1,50 @@
+name: Spec Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  spec-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Refresh official Gemini snapshots
+        run: bash scripts/spec_sync.sh
+
+      - name: Check for upstream drift
+        id: drift
+        run: |
+          if git diff --quiet -- spec; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff -- spec > spec-sync.diff
+            git diff --stat -- spec
+          fi
+
+      - name: Upload snapshot diff
+        if: steps.drift.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-sync-diff
+          path: |
+            spec/
+            spec-sync.diff
+
+      - name: Fail when sources changed
+        if: steps.drift.outputs.changed == 'true'
+        run: |
+          echo "Official Gemini sources changed. Review the spec snapshot diff." >&2
+          exit 1

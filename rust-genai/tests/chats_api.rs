@@ -20,13 +20,15 @@ async fn chat_send_message_updates_history() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:generateContent",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&server)
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     let response = chat.send_message("hello").await.unwrap();
     assert_eq!(response.text().as_deref(), Some("Hi"));
 
@@ -44,13 +46,15 @@ async fn chat_send_alias_updates_history() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:generateContent",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&server)
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     let response = chat.send("hello").await.unwrap();
     assert_eq!(response.text().as_deref(), Some("Hi"));
 
@@ -68,13 +72,15 @@ async fn chat_send_message_without_content_does_not_append_history() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:generateContent",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&server)
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     let response = chat.send_message("hello").await.unwrap();
     assert!(response.text().is_none());
 
@@ -93,7 +99,7 @@ async fn chat_send_message_stream_updates_history() {
 
     Mock::given(method("POST"))
         .and(path(
-            "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
         ))
         .and(query_param("alt", "sse"))
         .respond_with(
@@ -105,7 +111,7 @@ async fn chat_send_message_stream_updates_history() {
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     let stream = chat.send_message_stream("hi").await.unwrap();
     futures_util::pin_mut!(stream);
     let mut texts = Vec::new();
@@ -128,7 +134,7 @@ async fn chat_send_stream_alias_without_content_keeps_history() {
 
     Mock::given(method("POST"))
         .and(path(
-            "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
         ))
         .and(query_param("alt", "sse"))
         .respond_with(
@@ -140,7 +146,7 @@ async fn chat_send_stream_alias_without_content_keeps_history() {
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     let stream = chat.send_stream("hi").await.unwrap();
     futures_util::pin_mut!(stream);
     while let Some(item) = stream.next().await {
@@ -166,7 +172,7 @@ async fn chat_send_message_with_callable_tools() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path("/v1beta/models/gemini-2.5-flash:generateContent"))
         .and(body_string_contains("functionResponse"))
         .respond_with(ResponseTemplate::new(200).set_body_json(final_body))
         .with_priority(1)
@@ -174,14 +180,14 @@ async fn chat_send_message_with_callable_tools() {
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path("/v1beta/models/gemini-2.5-flash:generateContent"))
         .respond_with(ResponseTemplate::new(200).set_body_json(function_call_body))
         .with_priority(2)
         .mount(&server)
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-2.5-flash");
     let mut tool = InlineCallableTool::from_declarations(vec![FunctionDeclaration {
         name: "echo".to_string(),
         description: None,
@@ -221,7 +227,7 @@ async fn chat_send_message_with_callable_tools_applies_afc_history() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path("/v1beta/models/gemini-2.5-flash:generateContent"))
         .and(body_string_contains("functionResponse"))
         .respond_with(ResponseTemplate::new(200).set_body_json(final_body))
         .with_priority(1)
@@ -229,14 +235,14 @@ async fn chat_send_message_with_callable_tools_applies_afc_history() {
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path("/v1beta/models/gemini-2.5-flash:generateContent"))
         .respond_with(ResponseTemplate::new(200).set_body_json(function_call_body))
         .with_priority(2)
         .mount(&server)
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-2.5-flash");
     let mut tool = InlineCallableTool::from_declarations(vec![FunctionDeclaration {
         name: "echo".to_string(),
         description: None,
@@ -271,7 +277,7 @@ async fn chat_send_message_stream_with_callable_tools_applies_afc_history() {
 
     Mock::given(method("POST"))
         .and(path(
-            "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
         ))
         .and(query_param("alt", "sse"))
         .respond_with(
@@ -283,7 +289,7 @@ async fn chat_send_message_stream_with_callable_tools_applies_afc_history() {
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     let stream = chat
         .send_message_stream_with_callable_tools("hi", vec![])
         .await
@@ -309,7 +315,7 @@ async fn chat_send_message_stream_with_callable_tools() {
 
     Mock::given(method("POST"))
         .and(path(
-            "/v1beta/models/gemini-2.0-flash:streamGenerateContent",
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
         ))
         .and(query_param("alt", "sse"))
         .respond_with(
@@ -330,7 +336,7 @@ async fn chat_send_message_stream_with_callable_tools() {
     let client = build_gemini_client(&server.uri());
     let chat = client
         .chats()
-        .create_with_config("gemini-2.0-flash", config);
+        .create_with_config("gemini-3-flash-preview", config);
 
     let mut tool = InlineCallableTool::from_declarations(vec![FunctionDeclaration {
         name: "echo".to_string(),
@@ -373,13 +379,15 @@ async fn chat_clear_history_removes_entries() {
     });
 
     Mock::given(method("POST"))
-        .and(path("/v1beta/models/gemini-2.0-flash:generateContent"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:generateContent",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&server)
         .await;
 
     let client = build_gemini_client(&server.uri());
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     chat.send_message("hello").await.unwrap();
     assert_eq!(chat.history().await.len(), 2);
 

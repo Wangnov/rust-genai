@@ -41,7 +41,7 @@ async fn live_session_websocket_flow() {
     let mut session = client
         .live()
         .connect(
-            "gemini-2.0-flash",
+            "gemini-3.1-flash-live-preview",
             types::live_types::LiveConnectConfig::default(),
         )
         .await

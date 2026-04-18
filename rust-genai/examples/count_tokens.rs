@@ -6,7 +6,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .count_tokens("gemini-2.5-flash", vec![Content::text("hello")])
+        .count_tokens("gemini-3-flash-preview", vec![Content::text("hello")])
         .await?;
     println!("{:?}", response.total_tokens);
     Ok(())

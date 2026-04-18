@@ -44,17 +44,17 @@ async fn api_smoke_gemini_models_text() {
         })
         .await
         .unwrap();
-    models.get("gemini-2.0-flash").await.unwrap();
+    models.get("gemini-3-flash-preview").await.unwrap();
     models
         .generate_content(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
         )
         .await
         .unwrap();
     let mut stream = models
         .generate_content_stream(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
             types::models::GenerateContentConfig::default(),
         )
@@ -63,21 +63,21 @@ async fn api_smoke_gemini_models_text() {
     stream.next().await.unwrap().unwrap();
     models
         .embed_content(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
         )
         .await
         .unwrap();
     models
         .count_tokens(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
         )
         .await
         .unwrap();
     models
         .count_tokens_or_estimate(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             vec![types::content::Content::text("hi")],
             types::models::CountTokensConfig::default(),
             Some(&SimpleTokenEstimator),
@@ -110,7 +110,7 @@ async fn api_smoke_gemini_models_media() {
         .unwrap();
     models
         .update(
-            "models/gemini-2.0-flash",
+            "models/gemini-3-flash-preview",
             types::models::UpdateModelConfig {
                 display_name: Some("updated".into()),
                 ..Default::default()
@@ -120,7 +120,7 @@ async fn api_smoke_gemini_models_media() {
         .unwrap();
     models
         .delete(
-            "models/gemini-2.0-flash",
+            "models/gemini-3-flash-preview",
             types::models::DeleteModelConfig::default(),
         )
         .await
@@ -131,7 +131,7 @@ async fn api_smoke_gemini_models_media() {
 async fn api_smoke_gemini_chats() {
     let ctx = setup_gemini_context().await;
     let client = &ctx.client;
-    let chat = client.chats().create("gemini-2.0-flash");
+    let chat = client.chats().create("gemini-3-flash-preview");
     chat.send_message("hello").await.unwrap();
     let chat_stream = chat.send_message_stream("hi").await.unwrap();
     let mut chat_stream = Box::pin(chat_stream);
@@ -169,7 +169,7 @@ async fn api_smoke_gemini_caches() {
 
     caches
         .create(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             types::caches::CreateCachedContentConfig {
                 contents: Some(vec![types::content::Content::text("cache")]),
                 ..Default::default()
@@ -201,10 +201,10 @@ async fn api_smoke_gemini_batches() {
 
     batches
         .create(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             types::batches::BatchJobSource {
                 inlined_requests: Some(vec![types::batches::InlinedRequest {
-                    model: Some("models/gemini-2.0-flash".into()),
+                    model: Some("models/gemini-3-flash-preview".into()),
                     contents: Some(vec![types::content::Content::text("hi")]),
                     metadata: None,
                     config: None,
@@ -307,14 +307,14 @@ async fn api_smoke_gemini_interactions() {
 
     interactions
         .create(types::interactions::CreateInteractionConfig::new(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             "hello",
         ))
         .await
         .unwrap();
     let mut interaction_stream = interactions
         .create_stream(types::interactions::CreateInteractionConfig::new(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             "hello",
         ))
         .await
@@ -361,7 +361,7 @@ async fn api_smoke_gemini_tunings() {
 
     tunings
         .tune(
-            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
             types::tunings::TuningDataset {
                 examples: Some(vec![types::tunings::TuningExample {
                     text_input: Some("hi".into()),
