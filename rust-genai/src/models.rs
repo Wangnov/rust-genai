@@ -358,7 +358,7 @@ impl Models {
         let response = self
             .generate_content_with_config(model, contents, config)
             .await?;
-        let text = response.text().ok_or_else(|| Error::Parse {
+        let text = first_candidate_text(&response).ok_or_else(|| Error::Parse {
             message: "Expected text response containing JSON".into(),
         })?;
 
@@ -1317,6 +1317,17 @@ impl Models {
         resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(resp)
     }
+}
+
+fn first_candidate_text(response: &GenerateContentResponse) -> Option<String> {
+    let mut text = String::new();
+    let content = response.candidates.first()?.content.as_ref()?;
+    for part in &content.parts {
+        if let Some(part_text) = part.text_value() {
+            text.push_str(part_text);
+        }
+    }
+    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(test)]

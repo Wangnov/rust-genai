@@ -603,6 +603,41 @@ async fn test_generate_json_parses_response() {
 }
 
 #[tokio::test]
+async fn test_generate_json_parses_concatenated_text_parts() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-1.5-pro:generateContent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {"text": "{\"ok\":"},
+                        {"text": "true}"},
+                        {"functionCall": {"name": "ignored_helper", "args": {}}}
+                    ]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+
+    let parsed = client
+        .models()
+        .generate_json::<JsonSmokeResponse>("gemini-1.5-pro", vec![Content::text("return json")])
+        .await
+        .unwrap();
+
+    assert_eq!(parsed, JsonSmokeResponse { ok: true });
+}
+
+#[tokio::test]
 async fn test_generate_json_requires_text_response() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
