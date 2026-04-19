@@ -697,9 +697,7 @@ impl ClientInner {
         } else {
             let mut response = self.execute_once(request_template).await?;
             if !response.status().is_success() {
-                let retryable =
-                    DEFAULT_RETRY_HTTP_STATUS_CODES.contains(&response.status().as_u16());
-                attach_retry_metadata(&mut response, 1, retryable);
+                attach_retry_metadata_for_codes(&mut response, 1, &DEFAULT_RETRY_HTTP_STATUS_CODES);
             }
             Ok(response)
         }
@@ -716,19 +714,26 @@ impl ClientInner {
         retry_options: &HttpRetryOptions,
     ) -> Result<reqwest::Response> {
         let attempts = retry_options.attempts.unwrap_or(DEFAULT_RETRY_ATTEMPTS);
-        if attempts <= 1 {
-            return self.execute_once(request_template).await;
-        }
-
-        // If the request body can't be cloned, we can't safely retry.
-        if request_template.try_clone().is_none() {
-            return self.execute_once(request_template).await;
-        }
-
         let retryable_codes: &[u16] = retry_options
             .http_status_codes
             .as_deref()
             .unwrap_or(&DEFAULT_RETRY_HTTP_STATUS_CODES);
+        if attempts <= 1 {
+            let mut response = self.execute_once(request_template).await?;
+            if !response.status().is_success() {
+                attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
+            }
+            return Ok(response);
+        }
+
+        // If the request body can't be cloned, we can't safely retry.
+        if request_template.try_clone().is_none() {
+            let mut response = self.execute_once(request_template).await?;
+            if !response.status().is_success() {
+                attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
+            }
+            return Ok(response);
+        }
 
         for attempt in 0..attempts {
             let request = request_template
@@ -859,11 +864,33 @@ fn attach_retry_metadata(response: &mut reqwest::Response, attempts: u32, retrya
     });
 }
 
+fn attach_retry_metadata_for_codes(
+    response: &mut reqwest::Response,
+    attempts: u32,
+    retryable_codes: &[u16],
+) {
+    let retryable = retryable_codes.contains(&response.status().as_u16());
+    attach_retry_metadata(response, attempts, retryable);
+}
+
 fn retry_after_delay_secs(headers: &HeaderMap) -> Option<f64> {
-    headers
+    let retry_after = headers
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<f64>().ok())
+        .map(str::trim)?;
+
+    retry_after
+        .parse::<f64>()
+        .ok()
+        .map(|delay| delay.max(0.0))
+        .or_else(|| {
+            httpdate::parse_http_date(retry_after).ok().map(|deadline| {
+                deadline
+                    .duration_since(SystemTime::now())
+                    .unwrap_or_default()
+                    .as_secs_f64()
+            })
+        })
 }
 
 fn bounded_retry_delay_secs(
@@ -991,8 +1018,13 @@ fn normalize_base_url(base_url: &str) -> String {
 mod tests {
     use super::*;
     use crate::test_support::with_env;
+    use bytes::Bytes;
+    use futures_util::stream;
     use std::path::PathBuf;
+    use std::time::SystemTime;
     use tempfile::tempdir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_client_from_api_key() {
@@ -1226,6 +1258,64 @@ mod tests {
 
         let delay = bounded_retry_delay_secs(&options, 2, None);
         assert_eq!(delay, 4.0);
+    }
+
+    #[test]
+    fn test_retry_after_delay_secs_parses_http_date() {
+        let deadline = SystemTime::now() + Duration::from_secs(120);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_str(&httpdate::fmt_http_date(deadline)).unwrap(),
+        );
+
+        let delay = retry_after_delay_secs(&headers).unwrap();
+        assert!((110.0..=120.0).contains(&delay));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_http_options_preserves_custom_retry_metadata_without_retries() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/retry-once"))
+            .respond_with(ResponseTemplate::new(409).set_body_string("conflict"))
+            .mount(&server)
+            .await;
+
+        let client = Client::new("test-key").unwrap();
+        let request = client
+            .inner
+            .http
+            .post(format!("{}/retry-once", server.uri()))
+            .body(reqwest::Body::wrap_stream(stream::once(async {
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b"payload"))
+            })));
+        let http_options = rust_genai_types::http::HttpOptions {
+            retry_options: Some(HttpRetryOptions {
+                attempts: Some(2),
+                http_status_codes: Some(vec![409]),
+                initial_delay: Some(0.0),
+                max_delay: Some(0.0),
+                exp_base: Some(0.0),
+                jitter: Some(0.0),
+            }),
+            ..Default::default()
+        };
+
+        let response = client
+            .inner
+            .send_with_http_options(request, Some(&http_options))
+            .await
+            .unwrap();
+        let retry_metadata = response
+            .extensions()
+            .get::<RetryMetadata>()
+            .copied()
+            .unwrap();
+
+        assert_eq!(response.status().as_u16(), 409);
+        assert_eq!(retry_metadata.attempts, 1);
+        assert!(retry_metadata.retryable);
     }
 
     #[test]

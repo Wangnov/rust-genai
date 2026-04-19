@@ -29,6 +29,7 @@ memchr = { workspace = true }
 mime_guess = { workspace = true }
 tokio-tungstenite = { workspace = true }
 google-cloud-auth = { workspace = true }
+httpdate = "1.0"
 kitoken = { version = "0.10", optional = true, features = ["convert-sentencepiece"] }
 sha2 = { version = "0.10", optional = true }
 rmcp = { workspace = true, optional = true, features = ["client", "transport-child-process"] }

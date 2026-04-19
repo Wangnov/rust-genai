@@ -2005,6 +2005,7 @@ dependencies = [
  "futures-util",
  "google-cloud-auth",
  "http",
+ "httpdate",
  "kitoken",
  "memchr",
  "mime_guess",

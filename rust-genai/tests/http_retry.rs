@@ -173,6 +173,34 @@ async fn http_retry_attempts_one_disables_retry() {
 }
 
 #[tokio::test]
+async fn http_retry_attempts_one_preserves_custom_retryability() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1beta/cachedContents"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({
+            "error": {
+                "message": "conflict",
+                "status": "ABORTED"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .api_version("v1beta")
+        .retry_options(no_delay_retry_options(1, vec![409]))
+        .build()
+        .unwrap();
+
+    let err = client.caches().list().await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 409);
+    assert_eq!(err.attempts(), Some(1));
+    assert!(err.is_retryable());
+}
+
+#[tokio::test]
 async fn http_retry_error_exposes_retry_metadata() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
