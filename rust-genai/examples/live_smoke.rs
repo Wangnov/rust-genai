@@ -1,8 +1,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
+use rust_genai::files::WaitForFileConfig;
 use rust_genai::types::content::Content;
-use rust_genai::types::enums::FileState;
 use rust_genai::types::models::{GenerateContentConfig, Model};
 use rust_genai::Client;
 
@@ -138,45 +138,6 @@ fn shorten(value: impl AsRef<str>) -> String {
     }
     let shortened: String = value.chars().take(LIMIT).collect();
     format!("{shortened}...")
-}
-
-async fn wait_for_active_file(
-    client: &Client,
-    file_name: &str,
-) -> Result<rust_genai::types::files::File, rust_genai::Error> {
-    for _ in 0..10 {
-        let file = client.files().get(file_name).await?;
-        if let Some(result) = validate_file_state(file_name, file)? {
-            return Ok(result);
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-
-    let file = client.files().get(file_name).await?;
-    validate_file_state(file_name, file)?.ok_or_else(|| rust_genai::Error::Timeout {
-        message: format!("file {file_name} stayed in PROCESSING state"),
-    })
-}
-
-fn validate_file_state(
-    file_name: &str,
-    file: rust_genai::types::files::File,
-) -> Result<Option<rust_genai::types::files::File>, rust_genai::Error> {
-    match file.state {
-        Some(FileState::Active) | None => Ok(Some(file)),
-        Some(FileState::Failed) => {
-            let message = file
-                .error
-                .as_ref()
-                .and_then(|status| status.message.clone())
-                .unwrap_or_else(|| format!("file {file_name} entered FAILED state"));
-            Err(rust_genai::Error::ApiError {
-                status: 500,
-                message,
-            })
-        }
-        Some(FileState::Processing) | Some(FileState::StateUnspecified) => Ok(None),
-    }
 }
 
 fn print_results(results: &[StepResult]) {
@@ -331,23 +292,46 @@ async fn main() -> rust_genai::Result<()> {
             file.mime_type, file.state
         ),
     ));
+    let mut file_probe_error: Option<rust_genai::Error> = None;
 
-    let file = wait_for_active_file(&client, &file_name).await?;
-    results.push(StepResult::pass(
-        "files.get",
-        format!("state={:?}, size_bytes={:?}", file.state, file.size_bytes),
-    ));
+    match client
+        .files()
+        .wait_for_active(
+            &file_name,
+            WaitForFileConfig {
+                poll_interval: Duration::from_secs(1),
+                timeout: Some(Duration::from_secs(10)),
+            },
+        )
+        .await
+    {
+        Ok(file) => results.push(StepResult::pass(
+            "files.get",
+            format!("state={:?}, size_bytes={:?}", file.state, file.size_bytes),
+        )),
+        Err(err) => {
+            results.push(StepResult::fail("files.get", err.to_string()));
+            file_probe_error = Some(err);
+        }
+    }
 
-    let list_response = client.files().list().await?;
-    results.push(StepResult::pass(
-        "files.list",
-        format!(
-            "count_on_first_page={}",
-            list_response.files.unwrap_or_default().len()
-        ),
-    ));
+    if file_probe_error.is_none() {
+        match client.files().list().await {
+            Ok(list_response) => results.push(StepResult::pass(
+                "files.list",
+                format!(
+                    "count_on_first_page={}",
+                    list_response.files.unwrap_or_default().len()
+                ),
+            )),
+            Err(err) => {
+                results.push(StepResult::fail("files.list", err.to_string()));
+                file_probe_error = Some(err);
+            }
+        }
+    }
 
-    if include_edge_probes {
+    if file_probe_error.is_none() && include_edge_probes {
         match client
             .models()
             .embed_content(
@@ -392,13 +376,24 @@ async fn main() -> rust_genai::Result<()> {
         }
     }
 
-    client.files().delete(&file_name).await?;
-    results.push(StepResult::pass(
-        "files.delete",
-        format!("deleted {file_name}"),
-    ));
+    match client.files().delete(&file_name).await {
+        Ok(_) => results.push(StepResult::pass(
+            "files.delete",
+            format!("deleted {file_name}"),
+        )),
+        Err(err) => {
+            results.push(StepResult::fail("files.delete", err.to_string()));
+            if file_probe_error.is_none() {
+                file_probe_error = Some(err);
+            }
+        }
+    }
 
     print_results(&results);
+
+    if let Some(err) = file_probe_error {
+        return Err(err);
+    }
 
     if let Some(failed) = results.iter().find(|item| !item.ok) {
         return Err(rust_genai::Error::InvalidConfig {
