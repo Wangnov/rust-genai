@@ -58,7 +58,9 @@ fn supports_action_or_unknown(model: &Model, action: &str) -> bool {
     model
         .supported_actions
         .as_ref()
-        .map(|actions| actions.iter().any(|item| item.eq_ignore_ascii_case(action)))
+        .map(|actions| {
+            actions.is_empty() || actions.iter().any(|item| item.eq_ignore_ascii_case(action))
+        })
         .unwrap_or(true)
 }
 
