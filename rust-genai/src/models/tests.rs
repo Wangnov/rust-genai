@@ -603,6 +603,68 @@ async fn test_generate_json_parses_response() {
 }
 
 #[tokio::test]
+async fn test_generate_json_requires_text_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-1.5-pro:generateContent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{"inlineData": {"mimeType": "image/png", "data": "Zm9v"}}]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+
+    let err = client
+        .models()
+        .generate_json::<JsonSmokeResponse>("gemini-1.5-pro", vec![Content::text("return json")])
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::Parse { .. }));
+}
+
+#[tokio::test]
+async fn test_generate_json_rejects_invalid_json() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-1.5-pro:generateContent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "{invalid json"}]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+
+    let err = client
+        .models()
+        .generate_json::<JsonSmokeResponse>("gemini-1.5-pro", vec![Content::text("return json")])
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::Serialization { .. }));
+}
+
+#[tokio::test]
 async fn test_generate_content_event_stream_emits_text_response_and_done() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -651,6 +713,65 @@ async fn test_generate_content_event_stream_emits_text_response_and_done() {
         GenerateContentStreamEvent::Done(ref response) if response.text() == Some("Hi".to_string())
     ));
     assert!(fourth.is_none());
+}
+
+#[tokio::test]
+async fn test_generate_content_event_stream_emits_function_call_and_usage() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-1.5-pro:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"lookup\",\"args\":{\"q\":\"rust\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":3,\"totalTokenCount\":5}}\n\n\
+                     data: [DONE]\n\n",
+                ),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+    let mut stream = client
+        .models()
+        .generate_content_event_stream(
+            "gemini-1.5-pro",
+            vec![Content::text("hi")],
+            GenerateContentConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    let first = stream.next_event().await.unwrap().unwrap();
+    let second = stream.next_event().await.unwrap().unwrap();
+    let third = stream.next_event().await.unwrap().unwrap();
+    let fourth = stream.next_event().await.unwrap().unwrap();
+
+    assert!(matches!(
+        first,
+        GenerateContentStreamEvent::FunctionCall(ref call)
+            if call.name.as_deref() == Some("lookup")
+    ));
+    assert!(matches!(
+        second,
+        GenerateContentStreamEvent::Usage(ref usage)
+            if usage.prompt_token_count == Some(3) && usage.total_token_count == Some(5)
+    ));
+    assert!(matches!(
+        third,
+        GenerateContentStreamEvent::Response(ref response) if response.function_calls().len() == 1
+    ));
+    assert!(matches!(
+        fourth,
+        GenerateContentStreamEvent::Done(ref response) if response.function_calls().len() == 1
+    ));
 }
 
 #[tokio::test]

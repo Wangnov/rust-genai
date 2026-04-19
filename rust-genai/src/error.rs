@@ -12,6 +12,17 @@ use rmcp::service::ServiceError;
 
 use crate::client::RetryMetadata;
 
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct ApiErrorMetadata {
+    details: Option<Value>,
+    headers: Option<HashMap<String, String>>,
+    body: Option<String>,
+    retry_after_secs: Option<u64>,
+    retryable: Option<bool>,
+    attempts: Option<u32>,
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("HTTP client error: {source}")]
@@ -25,12 +36,7 @@ pub enum Error {
         status: u16,
         message: String,
         code: Option<String>,
-        details: Option<Value>,
-        headers: Option<HashMap<String, String>>,
-        body: Option<String>,
-        retry_after_secs: Option<u64>,
-        retryable: Option<bool>,
-        attempts: Option<u32>,
+        metadata: Box<ApiErrorMetadata>,
     },
 
     #[error("Invalid configuration: {message}")]
@@ -83,12 +89,10 @@ impl Error {
             status,
             message: message.into(),
             code: None,
-            details: None,
-            headers: None,
-            body: None,
-            retry_after_secs: None,
-            retryable: Some(default_retryable_status(status)),
-            attempts: None,
+            metadata: Box::new(ApiErrorMetadata {
+                retryable: Some(default_retryable_status(status)),
+                ..Default::default()
+            }),
         }
     }
 
@@ -107,14 +111,23 @@ impl Error {
             status,
             message,
             code,
-            details,
-            headers,
-            body: if body.is_empty() { None } else { Some(body) },
-            retry_after_secs,
-            retryable: retryable_override
-                .or(retry_metadata.map(|meta| meta.retryable))
-                .or(Some(default_retryable_status(status))),
-            attempts: retry_metadata.map(|meta| meta.attempts),
+            metadata: Box::new(ApiErrorMetadata {
+                details,
+                headers,
+                body: if body.is_empty() { None } else { Some(body) },
+                retry_after_secs,
+                retryable: retryable_override
+                    .or(retry_metadata.map(|meta| meta.retryable))
+                    .or(Some(default_retryable_status(status))),
+                attempts: retry_metadata.map(|meta| meta.attempts),
+            }),
+        }
+    }
+
+    fn api_metadata(&self) -> Option<&ApiErrorMetadata> {
+        match self {
+            Self::ApiError { metadata, .. } => Some(metadata.as_ref()),
+            _ => None,
         }
     }
 
@@ -136,44 +149,32 @@ impl Error {
 
     #[must_use]
     pub fn details(&self) -> Option<&Value> {
-        match self {
-            Self::ApiError { details, .. } => details.as_ref(),
-            _ => None,
-        }
+        self.api_metadata()
+            .and_then(|metadata| metadata.details.as_ref())
     }
 
     #[must_use]
     pub fn headers(&self) -> Option<&HashMap<String, String>> {
-        match self {
-            Self::ApiError { headers, .. } => headers.as_ref(),
-            _ => None,
-        }
+        self.api_metadata()
+            .and_then(|metadata| metadata.headers.as_ref())
     }
 
     #[must_use]
     pub fn body(&self) -> Option<&str> {
-        match self {
-            Self::ApiError { body, .. } => body.as_deref(),
-            _ => None,
-        }
+        self.api_metadata()
+            .and_then(|metadata| metadata.body.as_deref())
     }
 
     #[must_use]
     pub fn attempts(&self) -> Option<u32> {
-        match self {
-            Self::ApiError { attempts, .. } => *attempts,
-            _ => None,
-        }
+        self.api_metadata().and_then(|metadata| metadata.attempts)
     }
 
     #[must_use]
     pub fn retry_after(&self) -> Option<Duration> {
-        match self {
-            Self::ApiError {
-                retry_after_secs, ..
-            } => retry_after_secs.map(Duration::from_secs),
-            _ => None,
-        }
+        self.api_metadata()
+            .and_then(|metadata| metadata.retry_after_secs)
+            .map(Duration::from_secs)
     }
 
     #[must_use]
@@ -184,11 +185,10 @@ impl Error {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            Self::ApiError {
-                retryable: Some(value),
-                ..
-            } => *value,
-            Self::ApiError { status, .. } => default_retryable_status(*status),
+            Self::ApiError { status, .. } => self
+                .api_metadata()
+                .and_then(|metadata| metadata.retryable)
+                .unwrap_or_else(|| default_retryable_status(*status)),
             _ => false,
         }
     }
@@ -265,6 +265,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
     use serde_json::json;
 
     #[test]
@@ -292,5 +293,51 @@ mod tests {
         assert_eq!(message, body);
         assert!(code.is_none());
         assert!(details.is_none());
+    }
+
+    #[test]
+    fn api_error_accessors_cover_defaults() {
+        let err = Error::api_error(503, "unavailable");
+        assert_eq!(err.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
+        assert_eq!(err.code(), None);
+        assert_eq!(err.details(), None);
+        assert_eq!(err.headers(), None);
+        assert_eq!(err.body(), None);
+        assert_eq!(err.attempts(), None);
+        assert_eq!(err.retry_after(), None);
+        assert!(err.is_retryable());
+        assert!(!err.is_rate_limited());
+
+        let bad_request = Error::api_error(400, "bad request");
+        assert_eq!(bad_request.status(), Some(StatusCode::BAD_REQUEST));
+        assert!(!bad_request.is_retryable());
+    }
+
+    #[test]
+    fn accessors_are_empty_for_non_api_errors() {
+        let err = Error::Parse {
+            message: "boom".into(),
+        };
+        assert_eq!(err.status(), None);
+        assert_eq!(err.code(), None);
+        assert_eq!(err.details(), None);
+        assert_eq!(err.headers(), None);
+        assert_eq!(err.body(), None);
+        assert_eq!(err.attempts(), None);
+        assert_eq!(err.retry_after(), None);
+        assert!(!err.is_retryable());
+        assert!(!err.is_rate_limited());
+    }
+
+    #[test]
+    fn header_helpers_collect_values_and_retry_after() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-test", HeaderValue::from_static("a"));
+        headers.append("x-test", HeaderValue::from_static("b"));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("7"));
+
+        let flattened = header_map_to_hash_map(&headers).unwrap();
+        assert_eq!(flattened.get("x-test").map(String::as_str), Some("a, b"));
+        assert_eq!(retry_after_secs(&headers), Some(7));
     }
 }

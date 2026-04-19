@@ -902,6 +902,9 @@ mod tests {
         assert!(matches!(err, Error::Parse { .. }));
         let err = finalize_upload("final", None).unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
+
+        let finalized = finalize_upload("final", Some(file.clone())).unwrap();
+        assert_eq!(finalized.name, file.name);
     }
 
     #[test]

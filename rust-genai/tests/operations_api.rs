@@ -74,3 +74,24 @@ async fn operations_api_flow_and_errors() {
         .unwrap();
     assert_eq!(all.len(), 2);
 }
+
+#[tokio::test]
+async fn operations_list_surfaces_api_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/operations"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({
+            "error": {
+                "message": "operations unavailable",
+                "status": "UNAVAILABLE"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = build_gemini_client_with_version(&server.uri(), "v1beta");
+    let err = client.operations().list().await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 503);
+    assert!(err.is_retryable());
+}
