@@ -44,10 +44,7 @@ impl Webhooks {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         parse_json_or_default::<Webhook>(response).await
     }
@@ -77,10 +74,7 @@ impl Webhooks {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         parse_json_or_default::<Webhook>(response).await
     }
@@ -115,10 +109,7 @@ impl Webhooks {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         parse_json_or_default::<WebhookListResponse>(response).await
     }
@@ -153,10 +144,7 @@ impl Webhooks {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         parse_json_or_default::<WebhookDeleteResponse>(response).await
     }
@@ -190,10 +178,7 @@ impl Webhooks {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         parse_json_or_default::<Webhook>(response).await
     }
@@ -228,10 +213,7 @@ impl Webhooks {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         parse_json_or_default::<WebhookPingResponse>(response).await
     }
@@ -269,10 +251,7 @@ impl Webhooks {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         parse_json_or_default::<WebhookRotateSigningSecretResponse>(response).await
     }

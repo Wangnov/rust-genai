@@ -292,10 +292,7 @@ impl Models {
         let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         if should_return_http_response {
@@ -545,10 +542,7 @@ impl Models {
         let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -603,10 +597,7 @@ impl Models {
         let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -666,10 +657,7 @@ impl Models {
         let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
@@ -727,10 +715,7 @@ impl Models {
             .send_with_http_options(request, config.http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
@@ -816,10 +801,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -864,10 +846,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -912,10 +891,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -958,10 +934,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let value = response.json::<Value>().await?;
@@ -1001,10 +974,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let value = response.json::<Value>().await?;
@@ -1038,10 +1008,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let value = response.json::<Value>().await?;
@@ -1085,10 +1052,7 @@ impl Models {
         let request = self.inner.http.get(url);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let mut result = response.json::<ListModelsResponse>().await?;
@@ -1137,10 +1101,7 @@ impl Models {
         let request = self.inner.http.get(url);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let result = response.json::<Model>().await?;
         Ok(result)
@@ -1172,10 +1133,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<Model>().await?)
     }
@@ -1202,10 +1160,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         if response.content_length().unwrap_or(0) == 0 {

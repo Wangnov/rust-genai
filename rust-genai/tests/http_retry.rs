@@ -1,6 +1,7 @@
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -169,4 +170,71 @@ async fn http_retry_attempts_one_disables_retry() {
         rust_genai::Error::ApiError { status: 500, .. }
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn http_retry_error_exposes_retry_metadata() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1beta/cachedContents"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "3")
+                .set_body_json(json!({
+                    "error": {
+                        "message": "slow down",
+                        "status": "RESOURCE_EXHAUSTED",
+                        "details": [{"quota": "tokens"}]
+                    }
+                })),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .api_version("v1beta")
+        .build()
+        .unwrap();
+
+    let err = client.caches().list().await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 429);
+    assert!(err.is_rate_limited());
+    assert!(err.is_retryable());
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(3)));
+    assert_eq!(err.attempts(), Some(1));
+    assert_eq!(err.code(), Some("RESOURCE_EXHAUSTED"));
+    assert_eq!(err.details(), Some(&json!([{"quota": "tokens"}])));
+    assert!(err.body().is_some());
+    assert!(err.headers().is_some());
+}
+
+#[tokio::test]
+async fn http_retry_error_tracks_attempt_count_after_retries() {
+    let server = MockServer::start().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("GET"))
+        .and(path("/v1beta/cachedContents"))
+        .respond_with(SequenceResponder {
+            calls: calls.clone(),
+            first: ResponseTemplate::new(500).set_body_string("boom-1"),
+            second: ResponseTemplate::new(500).set_body_string("boom-2"),
+        })
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .api_version("v1beta")
+        .retry_options(no_delay_retry_options(2, vec![500]))
+        .build()
+        .unwrap();
+
+    let err = client.caches().list().await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 500);
+    assert!(err.is_retryable());
+    assert_eq!(err.attempts(), Some(2));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }

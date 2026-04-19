@@ -22,6 +22,15 @@ export GEMINI_API_KEY="YOUR_API_KEY"
 export GOOGLE_API_KEY="YOUR_API_KEY"
 ```
 
+Vertex AI 可直接使用官方环境变量：
+
+```bash
+export GOOGLE_GENAI_USE_VERTEXAI=true
+export GOOGLE_CLOUD_PROJECT="my-project"
+export GOOGLE_CLOUD_LOCATION="us-central1"
+export GOOGLE_GENAI_API_VERSION="v1"
+```
+
 ## 3. 发送首个请求
 
 ```rust
@@ -84,6 +93,8 @@ async fn main() -> rust_genai::Result<()> {
 }
 ```
 
+同样可以直接使用 `Client::from_env()` 读取上面的官方 Vertex 环境变量。
+
 ## 6. OAuth / ADC
 
 在使用 ADC 之前，请先配置 Application Default Credentials（例如执行 `gcloud auth application-default login`，或设置 `GOOGLE_APPLICATION_CREDENTIALS` 指向服务账号 JSON）。
@@ -101,6 +112,12 @@ async fn main() -> rust_genai::Result<()> {
 ```
 
 更多完整示例请见 `rust-genai/examples/` 目录。
+
+更多配置细节可查看：
+
+- `docs/auth.md`
+- `docs/error-handling.md`
+- `docs/retry-timeout.md`
 
 ## 7. API 版本选择
 

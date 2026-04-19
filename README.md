@@ -66,8 +66,11 @@ async fn main() -> rust_genai::Result<()> {
 ## 文档
 
 - 快速开始：`docs/getting-started.md`
+- 认证指南：`docs/auth.md`
 - 兼容矩阵：`docs/compatibility-matrix.md`
 - API 版本：`docs/api-versions.md`
+- 错误处理：`docs/error-handling.md`
+- Retry / Timeout：`docs/retry-timeout.md`
 - 版本与稳定性：`docs/versioning.md`
 - 官方来源清单：`docs/official-sources.md`
 - 规范同步：`docs/spec-sync.md`
@@ -162,8 +165,11 @@ async fn main() -> rust_genai::Result<()> {
 ## Documentation
 
 - Getting Started: `docs/getting-started.md`
+- Auth Guide: `docs/auth.md`
 - Compatibility Matrix: `docs/compatibility-matrix.md`
 - API Versions: `docs/api-versions.md`
+- Error Handling: `docs/error-handling.md`
+- Retry / Timeout: `docs/retry-timeout.md`
 - Versioning and Stability: `docs/versioning.md`
 - Official Sources: `docs/official-sources.md`
 - Spec Sync: `docs/spec-sync.md`

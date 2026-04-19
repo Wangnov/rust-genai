@@ -233,7 +233,8 @@ async fn webhooks_error_responses_and_default_rotate_wrapper() {
         err,
         Error::ApiError {
             status: 400,
-            message
+            message,
+            ..
         } if message == "create failed"
     ));
 
@@ -251,7 +252,8 @@ async fn webhooks_error_responses_and_default_rotate_wrapper() {
         err,
         Error::ApiError {
             status: 422,
-            message
+            message,
+            ..
         } if message == "update failed"
     ));
 
@@ -260,7 +262,8 @@ async fn webhooks_error_responses_and_default_rotate_wrapper() {
         err,
         Error::ApiError {
             status: 500,
-            message
+            message,
+            ..
         } if message == "list failed"
     ));
 
@@ -269,7 +272,8 @@ async fn webhooks_error_responses_and_default_rotate_wrapper() {
         err,
         Error::ApiError {
             status: 404,
-            message
+            message,
+            ..
         } if message == "get failed"
     ));
 
@@ -278,7 +282,8 @@ async fn webhooks_error_responses_and_default_rotate_wrapper() {
         err,
         Error::ApiError {
             status: 503,
-            message
+            message,
+            ..
         } if message == "ping failed"
     ));
 
@@ -287,7 +292,8 @@ async fn webhooks_error_responses_and_default_rotate_wrapper() {
         err,
         Error::ApiError {
             status: 409,
-            message
+            message,
+            ..
         } if message == "rotate failed"
     ));
 
@@ -296,7 +302,8 @@ async fn webhooks_error_responses_and_default_rotate_wrapper() {
         err,
         Error::ApiError {
             status: 410,
-            message
+            message,
+            ..
         } if message == "delete failed"
     ));
 }
