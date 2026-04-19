@@ -1,0 +1,44 @@
+name: Release Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  candidate:
+    name: Candidate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo test (all features)
+        run: cargo test --all-features --all-targets
+
+      - name: Verify rust-genai-types package
+        run: cargo package -p rust-genai-types
+
+      - name: Verify rust-genai package
+        run: cargo package -p rust-genai
+
+      - name: Verify rust-genai-macros package
+        run: cargo package -p rust-genai-macros
