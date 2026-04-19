@@ -146,15 +146,37 @@ async fn wait_for_active_file(
 ) -> Result<rust_genai::types::files::File, rust_genai::Error> {
     for _ in 0..10 {
         let file = client.files().get(file_name).await?;
-        match file.state {
-            Some(FileState::Active) | None => return Ok(file),
-            Some(FileState::Failed) => return Ok(file),
-            Some(FileState::Processing) | Some(FileState::StateUnspecified) => {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
+        if let Some(result) = validate_file_state(file_name, file)? {
+            return Ok(result);
         }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    client.files().get(file_name).await
+
+    let file = client.files().get(file_name).await?;
+    validate_file_state(file_name, file)?.ok_or_else(|| rust_genai::Error::Timeout {
+        message: format!("file {file_name} stayed in PROCESSING state"),
+    })
+}
+
+fn validate_file_state(
+    file_name: &str,
+    file: rust_genai::types::files::File,
+) -> Result<Option<rust_genai::types::files::File>, rust_genai::Error> {
+    match file.state {
+        Some(FileState::Active) | None => Ok(Some(file)),
+        Some(FileState::Failed) => {
+            let message = file
+                .error
+                .as_ref()
+                .and_then(|status| status.message.clone())
+                .unwrap_or_else(|| format!("file {file_name} entered FAILED state"));
+            Err(rust_genai::Error::ApiError {
+                status: 500,
+                message,
+            })
+        }
+        Some(FileState::Processing) | Some(FileState::StateUnspecified) => Ok(None),
+    }
 }
 
 fn print_results(results: &[StepResult]) {
