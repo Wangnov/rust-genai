@@ -1,0 +1,388 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use futures_util::StreamExt;
+use rust_genai::types::content::Content;
+use rust_genai::types::enums::FileState;
+use rust_genai::types::models::{GenerateContentConfig, Model};
+use rust_genai::Client;
+
+#[derive(Debug)]
+struct StepResult {
+    name: &'static str,
+    ok: bool,
+    detail: String,
+}
+
+impl StepResult {
+    fn pass(name: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            name,
+            ok: true,
+            detail: detail.into(),
+        }
+    }
+
+    fn fail(name: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            name,
+            ok: false,
+            detail: detail.into(),
+        }
+    }
+}
+
+fn bare_model_name(name: &str) -> &str {
+    name.strip_prefix("models/").unwrap_or(name)
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn supports_action(model: &Model, action: &str) -> bool {
+    model
+        .supported_actions
+        .as_ref()
+        .is_some_and(|actions| actions.iter().any(|item| item.eq_ignore_ascii_case(action)))
+}
+
+fn supports_action_or_unknown(model: &Model, action: &str) -> bool {
+    model
+        .supported_actions
+        .as_ref()
+        .map(|actions| actions.iter().any(|item| item.eq_ignore_ascii_case(action)))
+        .unwrap_or(true)
+}
+
+fn choose_generation_model(models: &[Model]) -> Option<String> {
+    let mut candidates: Vec<String> = models
+        .iter()
+        .filter_map(|model| {
+            let name = bare_model_name(model.name.as_deref()?).to_string();
+            let lower = name.to_ascii_lowercase();
+            if !supports_action_or_unknown(model, "generateContent") {
+                return None;
+            }
+            if ["embedding", "image", "tts", "live", "veo", "imagen"]
+                .iter()
+                .any(|part| lower.contains(part))
+            {
+                return None;
+            }
+            Some(name)
+        })
+        .collect();
+    candidates.sort();
+
+    for fragment in [
+        "gemini-2.5-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-2.0-flash-lite",
+        "flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "flash",
+    ] {
+        if let Some(name) = candidates
+            .iter()
+            .find(|candidate| candidate.to_ascii_lowercase().contains(fragment))
+        {
+            return Some(name.clone());
+        }
+    }
+
+    candidates.into_iter().next()
+}
+
+fn choose_embedding_model(models: &[Model]) -> Option<String> {
+    let mut candidates: Vec<String> = models
+        .iter()
+        .filter_map(|model| {
+            let name = bare_model_name(model.name.as_deref()?).to_string();
+            if supports_action(model, "embedContent")
+                || name.to_ascii_lowercase().contains("embedding")
+            {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    candidates.sort();
+
+    for fragment in ["gemini-embedding-001", "gemini-embedding-2", "embedding"] {
+        if let Some(name) = candidates
+            .iter()
+            .find(|candidate| candidate.to_ascii_lowercase().contains(fragment))
+        {
+            return Some(name.clone());
+        }
+    }
+
+    candidates.into_iter().next()
+}
+
+fn shorten(value: impl AsRef<str>) -> String {
+    const LIMIT: usize = 120;
+    let value = value.as_ref().replace('\n', " ");
+    if value.chars().count() <= LIMIT {
+        return value;
+    }
+    let shortened: String = value.chars().take(LIMIT).collect();
+    format!("{shortened}...")
+}
+
+async fn wait_for_active_file(
+    client: &Client,
+    file_name: &str,
+) -> Result<rust_genai::types::files::File, rust_genai::Error> {
+    for _ in 0..10 {
+        let file = client.files().get(file_name).await?;
+        match file.state {
+            Some(FileState::Active) | None => return Ok(file),
+            Some(FileState::Failed) => return Ok(file),
+            Some(FileState::Processing) | Some(FileState::StateUnspecified) => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+    client.files().get(file_name).await
+}
+
+fn print_results(results: &[StepResult]) {
+    println!("== rust-genai live smoke ==");
+    for result in results {
+        let status = if result.ok { "PASS" } else { "FAIL" };
+        println!("[{status}] {} :: {}", result.name, result.detail);
+    }
+    let passed = results.iter().filter(|item| item.ok).count();
+    println!("== score {passed}/{} passed ==", results.len());
+}
+
+#[tokio::main]
+async fn main() -> rust_genai::Result<()> {
+    let client = Client::from_env()?;
+    let include_edge_probes = env_flag("GENAI_SMOKE_INCLUDE_EDGE_PROBES");
+    let mut results = Vec::<StepResult>::new();
+
+    let models_response = client.models().list().await?;
+    let listed_models = models_response.models.unwrap_or_default();
+    let generation_model = choose_generation_model(&listed_models).ok_or_else(|| {
+        rust_genai::Error::InvalidConfig {
+            message: "No low-cost text generation model found in models.list output".into(),
+        }
+    })?;
+    let embedding_model =
+        choose_embedding_model(&listed_models).ok_or_else(|| rust_genai::Error::InvalidConfig {
+            message: "No embedding model found in models.list output".into(),
+        })?;
+    let preview_models: Vec<String> = listed_models
+        .iter()
+        .filter_map(|model| {
+            model
+                .name
+                .as_deref()
+                .map(bare_model_name)
+                .map(str::to_string)
+        })
+        .take(8)
+        .collect();
+    results.push(StepResult::pass(
+        "models.list",
+        format!(
+            "{} models, text={}, embed={}, sample={}",
+            listed_models.len(),
+            generation_model,
+            embedding_model,
+            preview_models.join(", ")
+        ),
+    ));
+
+    let model = client.models().get(&generation_model).await?;
+    let supported = model.supported_actions.unwrap_or_default().join(",");
+    results.push(StepResult::pass(
+        "models.get",
+        format!("{generation_model} actions={supported}"),
+    ));
+
+    let response = client
+        .models()
+        .generate_content(
+            &generation_model,
+            vec![Content::text("Reply with exactly OK.")],
+        )
+        .await?;
+    results.push(StepResult::pass(
+        "models.generate_content",
+        shorten(response.text().unwrap_or_else(|| "<empty>".to_string())),
+    ));
+
+    let mut stream = client
+        .models()
+        .generate_content_stream(
+            &generation_model,
+            vec![Content::text(
+                "Reply with exactly three lowercase words about rust.",
+            )],
+            GenerateContentConfig::default(),
+        )
+        .await?;
+    let mut joined = String::new();
+    let mut chunks = 0usize;
+    while let Some(item) = stream.next().await {
+        let chunk = item?;
+        chunks += 1;
+        if let Some(text) = chunk.text() {
+            joined.push_str(&text);
+        }
+    }
+    results.push(StepResult::pass(
+        "models.generate_content_stream",
+        format!("chunks={chunks}, text={}", shorten(joined)),
+    ));
+
+    let token_response = client
+        .models()
+        .count_tokens(&generation_model, vec![Content::text("hello from rust")])
+        .await?;
+    results.push(StepResult::pass(
+        "models.count_tokens",
+        format!("total_tokens={:?}", token_response.total_tokens),
+    ));
+
+    let chat = client.chats().create(&generation_model);
+    let first_turn = chat
+        .send_message("Remember the word kiwi and reply with ACK.")
+        .await?;
+    results.push(StepResult::pass(
+        "chats.send_message.first_turn",
+        shorten(first_turn.text().unwrap_or_else(|| "<empty>".to_string())),
+    ));
+    let second_turn = chat.send_message("What word should you remember?").await?;
+    results.push(StepResult::pass(
+        "chats.send_message.second_turn",
+        shorten(second_turn.text().unwrap_or_else(|| "<empty>".to_string())),
+    ));
+
+    let embedding_response = client
+        .models()
+        .embed_content(
+            &embedding_model,
+            vec![Content::text("hello from rust sdk smoke test")],
+        )
+        .await?;
+    let dimensions = embedding_response
+        .embeddings
+        .as_ref()
+        .and_then(|items| items.first())
+        .and_then(|item| item.values.as_ref())
+        .map(Vec::len);
+    results.push(StepResult::pass(
+        "models.embed_content",
+        format!("model={embedding_model}, dims={dimensions:?}"),
+    ));
+
+    let upload_body = format!(
+        "rust-genai smoke {}\nhello from e2e",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before UNIX_EPOCH")
+            .as_secs()
+    );
+    let file = client
+        .files()
+        .upload(upload_body.as_bytes().to_vec(), "text/plain")
+        .await?;
+    let file_name = file.name.clone().unwrap_or_else(|| "<missing>".to_string());
+    results.push(StepResult::pass(
+        "files.upload",
+        format!(
+            "name={file_name}, mime={:?}, state={:?}",
+            file.mime_type, file.state
+        ),
+    ));
+
+    let file = wait_for_active_file(&client, &file_name).await?;
+    results.push(StepResult::pass(
+        "files.get",
+        format!("state={:?}, size_bytes={:?}", file.state, file.size_bytes),
+    ));
+
+    let list_response = client.files().list().await?;
+    results.push(StepResult::pass(
+        "files.list",
+        format!(
+            "count_on_first_page={}",
+            list_response.files.unwrap_or_default().len()
+        ),
+    ));
+
+    if include_edge_probes {
+        match client
+            .models()
+            .embed_content(
+                "text-embedding-004",
+                vec![Content::text("legacy example probe")],
+            )
+            .await
+        {
+            Ok(_) => results.push(StepResult::fail(
+                "edge.legacy_text_embedding_004",
+                "Legacy model succeeded; example assumptions changed",
+            )),
+            Err(err) => {
+                let detail = err.to_string();
+                if detail.contains("status 404") {
+                    results.push(StepResult::pass(
+                        "edge.legacy_text_embedding_004",
+                        "404 confirmed for text-embedding-004 on v1beta",
+                    ));
+                } else {
+                    results.push(StepResult::fail("edge.legacy_text_embedding_004", detail));
+                }
+            }
+        }
+
+        match client.files().download(&file_name).await {
+            Ok(bytes) => results.push(StepResult::fail(
+                "edge.files.download_uploaded",
+                format!("uploaded file became downloadable: {} bytes", bytes.len()),
+            )),
+            Err(err) => {
+                let detail = err.to_string();
+                if detail.contains("Only GENERATED files can be downloaded") {
+                    results.push(StepResult::pass(
+                        "edge.files.download_uploaded",
+                        "uploaded files stay non-downloadable on Gemini API",
+                    ));
+                } else {
+                    results.push(StepResult::fail("edge.files.download_uploaded", detail));
+                }
+            }
+        }
+    }
+
+    client.files().delete(&file_name).await?;
+    results.push(StepResult::pass(
+        "files.delete",
+        format!("deleted {file_name}"),
+    ));
+
+    print_results(&results);
+
+    if let Some(failed) = results.iter().find(|item| !item.ok) {
+        return Err(rust_genai::Error::InvalidConfig {
+            message: format!("Live smoke failed at {}", failed.name),
+        });
+    }
+
+    Ok(())
+}

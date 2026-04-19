@@ -193,7 +193,10 @@ impl Files {
         .await
     }
 
-    /// 下载文件（返回字节内容）。
+    /// 下载 GENERATED 文件（返回字节内容）。
+    ///
+    /// Gemini API 当前只允许下载服务端生成的文件；上传得到的 `source=UPLOADED`
+    /// 文件会返回 `INVALID_ARGUMENT`。
     ///
     /// # Errors
     /// 当请求失败或响应解析失败时返回错误。
@@ -202,7 +205,7 @@ impl Files {
             .await
     }
 
-    /// 下载文件（自定义配置）。
+    /// 下载 GENERATED 文件（自定义配置）。
     ///
     /// # Errors
     /// 当请求失败或响应解析失败时返回错误。

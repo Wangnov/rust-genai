@@ -17,6 +17,15 @@ cd rust-genai
 cargo run --example generate_content_basic
 ```
 
+低成本端到端 smoke probe：
+
+```bash
+cargo run -p rust-genai --example live_smoke
+
+# 加上已知边界探针
+GENAI_SMOKE_INCLUDE_EDGE_PROBES=1 cargo run -p rust-genai --example live_smoke
+```
+
 示例输入文件位于 `examples/files/input`，示例输出默认保存到 `examples/files/output`，
 可通过环境变量 `GENAI_EXAMPLE_FILES_DIR` 覆盖输出目录。
 
@@ -25,6 +34,7 @@ cargo run --example generate_content_basic
 - generate_content_basic
 - generate_content_stream
 - list_models
+- live_smoke
 - embed_content
 - count_tokens
 - compute_tokens
