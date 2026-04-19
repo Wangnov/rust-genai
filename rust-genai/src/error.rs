@@ -1,7 +1,7 @@
 //! Error definitions for the SDK.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use http::StatusCode;
 use serde_json::Value;
@@ -84,13 +84,17 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn api_error(status: u16, message: impl Into<String>) -> Self {
+    pub(crate) fn api_error_with_retryable(
+        status: u16,
+        message: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
         Self::ApiError {
             status,
             message: message.into(),
             code: None,
             metadata: Box::new(ApiErrorMetadata {
-                retryable: Some(default_retryable_status(status)),
+                retryable: Some(retryable),
                 ..Default::default()
             }),
         }
@@ -217,10 +221,19 @@ fn header_map_to_hash_map(headers: &reqwest::header::HeaderMap) -> Option<HashMa
 }
 
 fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    headers
+    let retry_after = headers
         .get(reqwest::header::RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+
+    retry_after.parse::<u64>().ok().or_else(|| {
+        httpdate::parse_http_date(retry_after).ok().map(|deadline| {
+            deadline
+                .duration_since(SystemTime::now())
+                .unwrap_or_default()
+                .as_secs()
+        })
+    })
 }
 
 fn parse_google_error(body: &str, status: u16) -> (String, Option<String>, Option<Value>) {
@@ -267,6 +280,7 @@ mod tests {
     use super::*;
     use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
     use serde_json::json;
+    use std::time::SystemTime;
 
     #[test]
     fn parse_google_error_extracts_metadata() {
@@ -297,7 +311,8 @@ mod tests {
 
     #[test]
     fn api_error_accessors_cover_defaults() {
-        let err = Error::api_error(503, "unavailable");
+        let err =
+            Error::api_error_with_retryable(503, "unavailable", default_retryable_status(503));
         assert_eq!(err.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
         assert_eq!(err.code(), None);
         assert_eq!(err.details(), None);
@@ -308,9 +323,14 @@ mod tests {
         assert!(err.is_retryable());
         assert!(!err.is_rate_limited());
 
-        let bad_request = Error::api_error(400, "bad request");
+        let bad_request =
+            Error::api_error_with_retryable(400, "bad request", default_retryable_status(400));
         assert_eq!(bad_request.status(), Some(StatusCode::BAD_REQUEST));
         assert!(!bad_request.is_retryable());
+
+        let terminal = Error::api_error_with_retryable(500, "terminal", false);
+        assert_eq!(terminal.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(!terminal.is_retryable());
     }
 
     #[test]
@@ -339,5 +359,16 @@ mod tests {
         let flattened = header_map_to_hash_map(&headers).unwrap();
         assert_eq!(flattened.get("x-test").map(String::as_str), Some("a, b"));
         assert_eq!(retry_after_secs(&headers), Some(7));
+    }
+
+    #[test]
+    fn retry_after_secs_parses_http_date() {
+        let mut headers = HeaderMap::new();
+        let deadline = SystemTime::now() + Duration::from_secs(60);
+        let header = httpdate::fmt_http_date(deadline);
+        headers.insert(RETRY_AFTER, HeaderValue::from_str(&header).unwrap());
+
+        let retry_after = retry_after_secs(&headers).unwrap();
+        assert!((58..=60).contains(&retry_after));
     }
 }

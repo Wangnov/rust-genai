@@ -450,7 +450,11 @@ impl Files {
             match file.state {
                 Some(FileState::Active) => return Ok(file),
                 Some(FileState::Failed) => {
-                    return Err(Error::api_error(500, "File processing failed"))
+                    return Err(Error::api_error_with_retryable(
+                        500,
+                        "File processing failed",
+                        false,
+                    ));
                 }
                 _ => {}
             }
