@@ -239,6 +239,8 @@ pub struct Model {
     pub input_token_limit: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_token_limit: Option<i32>,
+    /// Current Gemini API responses often omit this field.
+    /// Prefer model-name allowlists or trial requests when selecting capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supported_actions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
