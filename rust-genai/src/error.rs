@@ -14,6 +14,12 @@ use rmcp::service::ServiceError;
 
 use crate::client::RetryMetadata;
 
+const API_ERROR_METADATA_CAPACITY: usize = 4096;
+const API_ERROR_METADATA_MAX_TOTAL_BYTES: usize = 512 * 1024;
+const API_ERROR_METADATA_MAX_BODY_BYTES: usize = 8 * 1024;
+const API_ERROR_METADATA_MAX_DETAILS_BYTES: usize = 8 * 1024;
+const API_ERROR_METADATA_MAX_HEADERS_BYTES: usize = 4 * 1024;
+
 #[derive(Clone, Debug, Default)]
 struct ApiErrorMetadata {
     code: Option<String>,
@@ -23,6 +29,32 @@ struct ApiErrorMetadata {
     retry_after_secs: Option<u64>,
     retryable: Option<bool>,
     attempts: Option<u32>,
+}
+
+impl ApiErrorMetadata {
+    fn bounded(mut self) -> Self {
+        self.body = self
+            .body
+            .take()
+            .and_then(|body| truncate_string(body, API_ERROR_METADATA_MAX_BODY_BYTES));
+        self.details = self.details.take().and_then(bound_details);
+        self.headers = self.headers.take().and_then(bound_headers);
+        self
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.code.as_ref().map_or(0, String::len)
+            + self.body.as_ref().map_or(0, String::len)
+            + self.headers.as_ref().map_or(0, |headers| {
+                headers
+                    .iter()
+                    .map(|(name, value)| name.len() + value.len())
+                    .sum()
+            })
+            + self.details.as_ref().map_or(0, |details| {
+                serde_json::to_vec(details).map_or(0, |bytes| bytes.len())
+            })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -50,6 +82,7 @@ impl ApiErrorKey {
 struct ApiErrorMetadataRegistry {
     entries: HashMap<ApiErrorKey, ApiErrorMetadata>,
     order: VecDeque<ApiErrorKey>,
+    total_bytes: usize,
 }
 
 impl ApiErrorMetadataRegistry {
@@ -58,17 +91,25 @@ impl ApiErrorMetadataRegistry {
     }
 
     fn insert(&mut self, key: ApiErrorKey, metadata: ApiErrorMetadata) {
-        const API_ERROR_METADATA_CAPACITY: usize = 4096;
+        let metadata = metadata.bounded();
+        let metadata_bytes = metadata.retained_bytes();
 
-        if self.entries.insert(key, metadata).is_none() {
+        if let Some(previous) = self.entries.insert(key, metadata) {
+            self.total_bytes = self.total_bytes.saturating_sub(previous.retained_bytes());
+        } else {
             self.order.push_back(key);
         }
+        self.total_bytes += metadata_bytes;
 
-        while self.entries.len() > API_ERROR_METADATA_CAPACITY {
+        while self.entries.len() > API_ERROR_METADATA_CAPACITY
+            || self.total_bytes > API_ERROR_METADATA_MAX_TOTAL_BYTES
+        {
             let Some(oldest_key) = self.order.pop_front() else {
                 break;
             };
-            self.entries.remove(&oldest_key);
+            if let Some(removed) = self.entries.remove(&oldest_key) {
+                self.total_bytes = self.total_bytes.saturating_sub(removed.retained_bytes());
+            }
         }
     }
 }
@@ -260,6 +301,53 @@ fn api_error_metadata_registry() -> std::sync::MutexGuard<'static, ApiErrorMetad
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn truncate_string(mut value: String, max_bytes: usize) -> Option<String> {
+    if value.is_empty() || max_bytes == 0 {
+        return None;
+    }
+
+    if value.len() <= max_bytes {
+        return Some(value);
+    }
+
+    while value.len() > max_bytes.saturating_sub(3) && !value.is_empty() {
+        value.pop();
+    }
+    value.push_str("...");
+    Some(value)
+}
+
+fn bound_details(details: Value) -> Option<Value> {
+    let bytes = serde_json::to_vec(&details).ok()?;
+    if bytes.len() <= API_ERROR_METADATA_MAX_DETAILS_BYTES {
+        return Some(details);
+    }
+    Some(Value::String(format!(
+        "[truncated error.details: {} bytes]",
+        bytes.len()
+    )))
+}
+
+fn bound_headers(headers: HashMap<String, String>) -> Option<HashMap<String, String>> {
+    if headers.is_empty() || API_ERROR_METADATA_MAX_HEADERS_BYTES == 0 {
+        return None;
+    }
+
+    let mut remaining = API_ERROR_METADATA_MAX_HEADERS_BYTES;
+    let mut bounded = HashMap::new();
+
+    for (name, value) in headers {
+        let required = name.len() + value.len();
+        if required > remaining {
+            break;
+        }
+        remaining -= required;
+        bounded.insert(name, value);
+    }
+
+    (!bounded.is_empty()).then_some(bounded)
+}
+
 fn header_map_to_hash_map(headers: &reqwest::header::HeaderMap) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
     for (name, value) in headers {
@@ -445,5 +533,61 @@ mod tests {
 
         let retry_after = retry_after_secs(&headers).unwrap();
         assert!((58..=60).contains(&retry_after));
+    }
+
+    #[test]
+    fn api_error_metadata_bounds_large_payloads() {
+        let headers = (0..64)
+            .map(|idx| (format!("x-{idx}"), "v".repeat(128)))
+            .collect::<HashMap<_, _>>();
+        let metadata = ApiErrorMetadata {
+            code: Some("RESOURCE_EXHAUSTED".into()),
+            details: Some(json!({ "payload": "x".repeat(API_ERROR_METADATA_MAX_DETAILS_BYTES) })),
+            headers: Some(headers),
+            body: Some("b".repeat(API_ERROR_METADATA_MAX_BODY_BYTES + 32)),
+            retry_after_secs: Some(7),
+            retryable: Some(true),
+            attempts: Some(2),
+        }
+        .bounded();
+
+        assert!(metadata.body.unwrap().len() <= API_ERROR_METADATA_MAX_BODY_BYTES);
+        assert!(
+            metadata
+                .headers
+                .unwrap()
+                .into_iter()
+                .map(|(name, value)| name.len() + value.len())
+                .sum::<usize>()
+                <= API_ERROR_METADATA_MAX_HEADERS_BYTES
+        );
+        assert!(matches!(metadata.details, Some(Value::String(_))));
+    }
+
+    #[test]
+    fn api_error_metadata_registry_evicts_by_total_bytes() {
+        let mut registry = ApiErrorMetadataRegistry::default();
+        let first_key = ApiErrorKey::new(500, "first");
+
+        registry.insert(
+            first_key,
+            ApiErrorMetadata {
+                body: Some("a".repeat(API_ERROR_METADATA_MAX_BODY_BYTES)),
+                ..Default::default()
+            },
+        );
+
+        for idx in 0..96 {
+            registry.insert(
+                ApiErrorKey::new(500, &format!("entry-{idx}")),
+                ApiErrorMetadata {
+                    body: Some("b".repeat(API_ERROR_METADATA_MAX_BODY_BYTES)),
+                    ..Default::default()
+                },
+            );
+        }
+
+        assert!(registry.total_bytes <= API_ERROR_METADATA_MAX_TOTAL_BYTES);
+        assert!(registry.get(&first_key).is_none());
     }
 }
