@@ -158,16 +158,15 @@ async fn main() -> rust_genai::Result<()> {
     let include_edge_probes = env_flag("GENAI_SMOKE_INCLUDE_EDGE_PROBES");
     let mut results = Vec::<StepResult>::new();
 
-    let models_response = client.models().list().await?;
-    let listed_models = models_response.models.unwrap_or_default();
+    let listed_models = client.models().all().await?;
     let generation_model = choose_generation_model(&listed_models).ok_or_else(|| {
         rust_genai::Error::InvalidConfig {
-            message: "No low-cost text generation model found in models.list output".into(),
+            message: "No low-cost text generation model found in discovered model set".into(),
         }
     })?;
     let embedding_model =
         choose_embedding_model(&listed_models).ok_or_else(|| rust_genai::Error::InvalidConfig {
-            message: "No embedding model found in models.list output".into(),
+            message: "No embedding model found in discovered model set".into(),
         })?;
     let preview_models: Vec<String> = listed_models
         .iter()
@@ -181,7 +180,7 @@ async fn main() -> rust_genai::Result<()> {
         .take(8)
         .collect();
     results.push(StepResult::pass(
-        "models.list",
+        "models.all",
         format!(
             "{} models, text={}, embed={}, sample={}",
             listed_models.len(),
@@ -286,7 +285,18 @@ async fn main() -> rust_genai::Result<()> {
         .files()
         .upload(upload_body.as_bytes().to_vec(), "text/plain")
         .await?;
-    let file_name = file.name.clone().unwrap_or_else(|| "<missing>".to_string());
+    let file_name = match file.name.clone() {
+        Some(name) => name,
+        None => {
+            let detail = format!(
+                "upload response missing file.name, mime={:?}, state={:?}",
+                file.mime_type, file.state
+            );
+            results.push(StepResult::fail("files.upload", detail.clone()));
+            print_results(&results);
+            return Err(rust_genai::Error::Parse { message: detail });
+        }
+    };
     results.push(StepResult::pass(
         "files.upload",
         format!(
