@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SPEC_DIR = ROOT / "spec"
 USER_AGENT = "rust-genai-spec-sync/0.2.0"
+GOOGLE_API_KEY_RE = re.compile(r"AIza[0-9A-Za-z\-_]{35}")
 
 SOURCES = (
     {
@@ -39,7 +41,10 @@ def fetch_text(url: str) -> str:
 def normalize_text(raw: str, kind: str) -> str:
     if kind == "json":
         return json.dumps(json.loads(raw), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    return raw if raw.endswith("\n") else raw + "\n"
+    # ai.google.dev documentation pages can embed public site bootstrap keys in HTML.
+    # Keep the snapshot content while removing secret-scanning hits from generated files.
+    sanitized = GOOGLE_API_KEY_RE.sub("REDACTED_GOOGLE_API_KEY", raw)
+    return sanitized if sanitized.endswith("\n") else sanitized + "\n"
 
 
 def sha256_text(text: str) -> str:
