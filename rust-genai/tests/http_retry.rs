@@ -232,8 +232,8 @@ async fn http_retry_error_exposes_retry_metadata() {
     assert!(err.is_retryable());
     assert_eq!(err.retry_after(), Some(Duration::from_secs(3)));
     assert_eq!(err.attempts(), Some(1));
-    assert_eq!(err.code(), Some("RESOURCE_EXHAUSTED"));
-    assert_eq!(err.details(), Some(&json!([{"quota": "tokens"}])));
+    assert_eq!(err.code().as_deref(), Some("RESOURCE_EXHAUSTED"));
+    assert_eq!(err.details(), Some(json!([{"quota": "tokens"}])));
     assert!(err.body().is_some());
     assert!(err.headers().is_some());
 }

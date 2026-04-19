@@ -223,7 +223,7 @@ async fn interactions_surface_api_errors_across_endpoints() {
 
     let err = interactions.get("int_get").await.unwrap_err();
     assert_eq!(err.status().unwrap().as_u16(), 404);
-    assert_eq!(err.code(), Some("NOT_FOUND"));
+    assert_eq!(err.code().as_deref(), Some("NOT_FOUND"));
 
     let err = match interactions.get_stream("int_stream").await {
         Ok(_) => panic!("expected interactions.get_stream to fail"),

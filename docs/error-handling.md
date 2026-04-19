@@ -4,7 +4,7 @@ All SDK methods return `Result<T, rust_genai::Error>`.
 
 ## Structured API Errors
 
-`Error::ApiError` now carries parsed metadata from Google-style error payloads.
+`Error::ApiError` keeps its stable `{ status, message }` shape, and helper methods expose parsed metadata from Google-style error payloads.
 
 ```rust
 match client.models().list().await {

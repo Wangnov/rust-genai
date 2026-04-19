@@ -1,6 +1,8 @@
 //! Error definitions for the SDK.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 
 use http::StatusCode;
@@ -12,9 +14,9 @@ use rmcp::service::ServiceError;
 
 use crate::client::RetryMetadata;
 
-#[doc(hidden)]
-#[derive(Debug, Default)]
-pub struct ApiErrorMetadata {
+#[derive(Clone, Debug, Default)]
+struct ApiErrorMetadata {
+    code: Option<String>,
     details: Option<Value>,
     headers: Option<HashMap<String, String>>,
     body: Option<String>,
@@ -22,6 +24,57 @@ pub struct ApiErrorMetadata {
     retryable: Option<bool>,
     attempts: Option<u32>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ApiErrorKey {
+    status: u16,
+    message_ptr: usize,
+    message_len: usize,
+    message_hash: u64,
+}
+
+impl ApiErrorKey {
+    fn new(status: u16, message: &str) -> Self {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        message.hash(&mut hasher);
+        Self {
+            status,
+            message_ptr: message.as_ptr() as usize,
+            message_len: message.len(),
+            message_hash: hasher.finish(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ApiErrorMetadataRegistry {
+    entries: HashMap<ApiErrorKey, ApiErrorMetadata>,
+    order: VecDeque<ApiErrorKey>,
+}
+
+impl ApiErrorMetadataRegistry {
+    fn get(&self, key: &ApiErrorKey) -> Option<ApiErrorMetadata> {
+        self.entries.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: ApiErrorKey, metadata: ApiErrorMetadata) {
+        const API_ERROR_METADATA_CAPACITY: usize = 4096;
+
+        if self.entries.insert(key, metadata).is_none() {
+            self.order.push_back(key);
+        }
+
+        while self.entries.len() > API_ERROR_METADATA_CAPACITY {
+            let Some(oldest_key) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest_key);
+        }
+    }
+}
+
+static API_ERROR_METADATA_REGISTRY: LazyLock<Mutex<ApiErrorMetadataRegistry>> =
+    LazyLock::new(|| Mutex::new(ApiErrorMetadataRegistry::default()));
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -32,12 +85,7 @@ pub enum Error {
     },
 
     #[error("API error (status {status}): {message}")]
-    ApiError {
-        status: u16,
-        message: String,
-        code: Option<String>,
-        metadata: Box<ApiErrorMetadata>,
-    },
+    ApiError { status: u16, message: String },
 
     #[error("Invalid configuration: {message}")]
     InvalidConfig { message: String },
@@ -89,15 +137,16 @@ impl Error {
         message: impl Into<String>,
         retryable: bool,
     ) -> Self {
-        Self::ApiError {
+        let message = message.into();
+        set_api_metadata(
             status,
-            message: message.into(),
-            code: None,
-            metadata: Box::new(ApiErrorMetadata {
+            &message,
+            ApiErrorMetadata {
                 retryable: Some(retryable),
                 ..Default::default()
-            }),
-        }
+            },
+        );
+        Self::ApiError { status, message }
     }
 
     pub(crate) async fn api_error_from_response(
@@ -110,12 +159,11 @@ impl Error {
         let retry_after_secs = retry_after_secs(response.headers());
         let body = response.text().await.unwrap_or_default();
         let (message, code, details) = parse_google_error(&body, status);
-
-        Self::ApiError {
+        set_api_metadata(
             status,
-            message,
-            code,
-            metadata: Box::new(ApiErrorMetadata {
+            &message,
+            ApiErrorMetadata {
+                code,
                 details,
                 headers,
                 body: if body.is_empty() { None } else { Some(body) },
@@ -124,13 +172,15 @@ impl Error {
                     .or(retry_metadata.map(|meta| meta.retryable))
                     .or(Some(default_retryable_status(status))),
                 attempts: retry_metadata.map(|meta| meta.attempts),
-            }),
-        }
+            },
+        );
+
+        Self::ApiError { status, message }
     }
 
-    fn api_metadata(&self) -> Option<&ApiErrorMetadata> {
+    fn api_metadata(&self) -> Option<ApiErrorMetadata> {
         match self {
-            Self::ApiError { metadata, .. } => Some(metadata.as_ref()),
+            Self::ApiError { status, message } => api_metadata(*status, message),
             _ => None,
         }
     }
@@ -144,29 +194,23 @@ impl Error {
     }
 
     #[must_use]
-    pub fn code(&self) -> Option<&str> {
-        match self {
-            Self::ApiError { code, .. } => code.as_deref(),
-            _ => None,
-        }
+    pub fn code(&self) -> Option<String> {
+        self.api_metadata().and_then(|metadata| metadata.code)
     }
 
     #[must_use]
-    pub fn details(&self) -> Option<&Value> {
-        self.api_metadata()
-            .and_then(|metadata| metadata.details.as_ref())
+    pub fn details(&self) -> Option<Value> {
+        self.api_metadata().and_then(|metadata| metadata.details)
     }
 
     #[must_use]
-    pub fn headers(&self) -> Option<&HashMap<String, String>> {
-        self.api_metadata()
-            .and_then(|metadata| metadata.headers.as_ref())
+    pub fn headers(&self) -> Option<HashMap<String, String>> {
+        self.api_metadata().and_then(|metadata| metadata.headers)
     }
 
     #[must_use]
-    pub fn body(&self) -> Option<&str> {
-        self.api_metadata()
-            .and_then(|metadata| metadata.body.as_deref())
+    pub fn body(&self) -> Option<String> {
+        self.api_metadata().and_then(|metadata| metadata.body)
     }
 
     #[must_use]
@@ -200,6 +244,20 @@ impl Error {
 
 fn default_retryable_status(status: u16) -> bool {
     matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+}
+
+fn api_metadata(status: u16, message: &str) -> Option<ApiErrorMetadata> {
+    api_error_metadata_registry().get(&ApiErrorKey::new(status, message))
+}
+
+fn set_api_metadata(status: u16, message: &str, metadata: ApiErrorMetadata) {
+    api_error_metadata_registry().insert(ApiErrorKey::new(status, message), metadata);
+}
+
+fn api_error_metadata_registry() -> std::sync::MutexGuard<'static, ApiErrorMetadataRegistry> {
+    API_ERROR_METADATA_REGISTRY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn header_map_to_hash_map(headers: &reqwest::header::HeaderMap) -> Option<HashMap<String, String>> {
@@ -331,6 +389,23 @@ mod tests {
         let terminal = Error::api_error_with_retryable(500, "terminal", false);
         assert_eq!(terminal.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
         assert!(!terminal.is_retryable());
+    }
+
+    #[test]
+    fn api_error_public_shape_stays_constructible() {
+        let err = Error::ApiError {
+            status: 418,
+            message: "teapot".into(),
+        };
+
+        assert_eq!(err.status(), Some(StatusCode::IM_A_TEAPOT));
+        assert_eq!(err.code(), None);
+        assert_eq!(err.details(), None);
+        assert_eq!(err.headers(), None);
+        assert_eq!(err.body(), None);
+        assert_eq!(err.attempts(), None);
+        assert_eq!(err.retry_after(), None);
+        assert!(!err.is_retryable());
     }
 
     #[test]

@@ -731,7 +731,7 @@ mod tests {
         ));
         let err = get_operation_value(&gemini, "bad", None).await.unwrap_err();
         assert_eq!(err.status().unwrap().as_u16(), 500);
-        assert_eq!(err.code(), Some("INTERNAL"));
+        assert_eq!(err.code().as_deref(), Some("INTERNAL"));
 
         Mock::given(method("POST"))
             .and(path(
