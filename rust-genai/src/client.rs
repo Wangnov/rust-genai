@@ -749,8 +749,11 @@ impl ClientInner {
                 return Ok(response);
             }
 
-            let delay = retry_after_delay_secs(response.headers())
-                .unwrap_or_else(|| retry_delay_secs(retry_options, attempt));
+            let delay = bounded_retry_delay_secs(
+                retry_options,
+                attempt,
+                retry_after_delay_secs(response.headers()),
+            );
             // Drop the response before retrying to release the connection back to the pool.
             drop(response);
             if delay > 0.0 {
@@ -861,6 +864,23 @@ fn retry_after_delay_secs(headers: &HeaderMap) -> Option<f64> {
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.trim().parse::<f64>().ok())
+}
+
+fn bounded_retry_delay_secs(
+    options: &HttpRetryOptions,
+    retry_index: u32,
+    retry_after_secs: Option<f64>,
+) -> f64 {
+    let delay = retry_after_secs.unwrap_or_else(|| retry_delay_secs(options, retry_index));
+    let max_delay = options
+        .max_delay
+        .unwrap_or(DEFAULT_RETRY_MAX_DELAY_SECS)
+        .max(0.0);
+    if max_delay > 0.0 {
+        delay.min(max_delay)
+    } else {
+        delay
+    }
 }
 
 fn retry_delay_secs(options: &HttpRetryOptions, retry_index: u32) -> f64 {
@@ -1170,6 +1190,42 @@ mod tests {
                 assert!(matches!(result, Err(Error::InvalidConfig { .. })));
             },
         );
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_prefers_retry_after_with_cap() {
+        let options = HttpRetryOptions {
+            max_delay: Some(2.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 0, Some(120.0));
+        assert_eq!(delay, 2.0);
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_uses_retry_after_when_below_cap() {
+        let options = HttpRetryOptions {
+            max_delay: Some(5.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 0, Some(1.5));
+        assert_eq!(delay, 1.5);
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_falls_back_to_backoff() {
+        let options = HttpRetryOptions {
+            initial_delay: Some(1.0),
+            max_delay: Some(10.0),
+            exp_base: Some(2.0),
+            jitter: Some(0.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 2, None);
+        assert_eq!(delay, 4.0);
     }
 
     #[test]
