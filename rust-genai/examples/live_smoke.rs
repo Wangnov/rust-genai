@@ -142,6 +142,13 @@ fn shorten(value: impl AsRef<str>) -> String {
     format!("{shortened}...")
 }
 
+fn api_error_status(err: &rust_genai::Error) -> Option<u16> {
+    match err {
+        rust_genai::Error::ApiError { status, .. } => Some(*status),
+        _ => None,
+    }
+}
+
 fn print_results(results: &[StepResult]) {
     println!("== rust-genai live smoke ==");
     for result in results {
@@ -358,10 +365,10 @@ async fn main() -> rust_genai::Result<()> {
             )),
             Err(err) => {
                 let detail = err.to_string();
-                if detail.contains("status 404") {
+                if api_error_status(&err) == Some(404) {
                     results.push(StepResult::pass(
                         "edge.legacy_text_embedding_004",
-                        "404 confirmed for text-embedding-004 on v1beta",
+                        format!("404 confirmed for text-embedding-004 on v1beta ({detail})"),
                     ));
                 } else {
                     results.push(StepResult::fail("edge.legacy_text_embedding_004", detail));
@@ -376,10 +383,10 @@ async fn main() -> rust_genai::Result<()> {
             )),
             Err(err) => {
                 let detail = err.to_string();
-                if detail.contains("Only GENERATED files can be downloaded") {
+                if api_error_status(&err) == Some(400) {
                     results.push(StepResult::pass(
                         "edge.files.download_uploaded",
-                        "uploaded files stay non-downloadable on Gemini API",
+                        format!("uploaded files stay non-downloadable on Gemini API ({detail})"),
                     ));
                 } else {
                     results.push(StepResult::fail("edge.files.download_uploaded", detail));
