@@ -709,6 +709,7 @@ async fn test_generate_content_event_stream_emits_text_response_and_done() {
         .and(query_param("alt", "sse"))
         .respond_with(
             ResponseTemplate::new(200)
+                .insert_header("x-test", "1")
                 .insert_header("content-type", "text/event-stream")
                 .set_body_string(
                     "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi\"}]}}]}\n\n\
@@ -741,11 +742,27 @@ async fn test_generate_content_event_stream_emits_text_response_and_done() {
     assert!(matches!(first, GenerateContentStreamEvent::Text(ref text) if text == "Hi"));
     assert!(matches!(
         second,
-        GenerateContentStreamEvent::Response(ref response) if response.text() == Some("Hi".to_string())
+        GenerateContentStreamEvent::Response(ref response)
+            if response.text() == Some("Hi".to_string())
+                && response
+                    .sdk_http_response
+                    .as_ref()
+                    .and_then(|http| http.headers.as_ref())
+                    .and_then(|headers| headers.get("x-test"))
+                    .map(String::as_str)
+                    == Some("1")
     ));
     assert!(matches!(
         third,
-        GenerateContentStreamEvent::Done(ref response) if response.text() == Some("Hi".to_string())
+        GenerateContentStreamEvent::Done(ref response)
+            if response.text() == Some("Hi".to_string())
+                && response
+                    .sdk_http_response
+                    .as_ref()
+                    .and_then(|http| http.headers.as_ref())
+                    .and_then(|headers| headers.get("x-test"))
+                    .map(String::as_str)
+                    == Some("1")
     ));
     assert!(fourth.is_none());
 }

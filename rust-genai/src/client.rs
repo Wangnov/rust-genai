@@ -143,9 +143,12 @@ impl Client {
             Self::builder().api_key(api_key).backend(Backend::GeminiApi)
         };
 
-        if let Some(base_url) =
-            first_nonempty_env(&["GOOGLE_GENAI_BASE_URL", "GENAI_BASE_URL", "GEMINI_BASE_URL"])
-        {
+        let base_url_envs: &[&str] = if use_vertex {
+            &["GOOGLE_GENAI_BASE_URL", "GENAI_BASE_URL"]
+        } else {
+            &["GOOGLE_GENAI_BASE_URL", "GENAI_BASE_URL", "GEMINI_BASE_URL"]
+        };
+        if let Some(base_url) = first_nonempty_env(base_url_envs) {
             builder = builder.base_url(base_url);
         }
         if let Some(api_version) =
@@ -1075,6 +1078,30 @@ mod tests {
                 let client = Client::from_env().unwrap();
                 assert_eq!(client.inner.api_client.base_url, "https://env.example.com/");
                 assert_eq!(client.inner.api_client.api_version, "v99");
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_ignores_gemini_base_url_for_vertex() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", None),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", Some("true")),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+                ("GEMINI_BASE_URL", Some("https://gemini-only.example.com")),
+                ("GENAI_BASE_URL", None),
+                ("GOOGLE_GENAI_BASE_URL", None),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::VertexAi);
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://us-central1-aiplatform.googleapis.com/"
+                );
             },
         );
     }

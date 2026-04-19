@@ -754,8 +754,16 @@ impl Models {
             return Err(Error::api_error_from_response(response, None).await);
         }
 
+        let headers = response.headers().clone();
+        let sdk_http_response = sdk_http_response_from_headers(&headers);
         let saw_done = Arc::new(AtomicBool::new(false));
-        let stream = parse_sse_stream_with_done_signal(response, saw_done.clone());
+        let stream =
+            parse_sse_stream_with_done_signal(response, saw_done.clone()).map(move |item| {
+                item.map(|mut resp: GenerateContentResponse| {
+                    resp.sdk_http_response = Some(sdk_http_response.clone());
+                    resp
+                })
+            });
 
         Ok(GenerateContentEventStream::new(Box::pin(stream), saw_done))
     }
