@@ -120,26 +120,28 @@ impl Client {
         let vertex_override = env_flag("GOOGLE_GENAI_USE_VERTEXAI");
         let vertex_project = first_nonempty_env(&["GOOGLE_CLOUD_PROJECT"]);
         let vertex_location = first_nonempty_env(&["GOOGLE_CLOUD_LOCATION"]);
+        let api_key = first_nonempty_env(&["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
         let has_complete_vertex_env = vertex_project.is_some() && vertex_location.is_some();
-        let use_vertex = vertex_override.unwrap_or(has_complete_vertex_env);
+        let use_vertex = match vertex_override {
+            Some(flag) => flag,
+            None => has_complete_vertex_env && api_key.is_none(),
+        };
 
-        let mut builder =
-            if use_vertex {
-                let mut builder = Self::builder().backend(Backend::VertexAi);
-                if let Some(project) = vertex_project {
-                    builder = builder.vertex_project(project);
-                }
-                if let Some(location) = vertex_location {
-                    builder = builder.vertex_location(location);
-                }
-                builder
-            } else {
-                let api_key = first_nonempty_env(&["GEMINI_API_KEY", "GOOGLE_API_KEY"])
-                    .ok_or_else(|| Error::InvalidConfig {
-                        message: "GEMINI_API_KEY or GOOGLE_API_KEY not found".into(),
-                    })?;
-                Self::builder().api_key(api_key).backend(Backend::GeminiApi)
-            };
+        let mut builder = if use_vertex {
+            let mut builder = Self::builder().backend(Backend::VertexAi);
+            if let Some(project) = vertex_project {
+                builder = builder.vertex_project(project);
+            }
+            if let Some(location) = vertex_location {
+                builder = builder.vertex_location(location);
+            }
+            builder
+        } else {
+            let api_key = api_key.ok_or_else(|| Error::InvalidConfig {
+                message: "GEMINI_API_KEY or GOOGLE_API_KEY not found".into(),
+            })?;
+            Self::builder().api_key(api_key).backend(Backend::GeminiApi)
+        };
 
         if let Some(base_url) =
             first_nonempty_env(&["GOOGLE_GENAI_BASE_URL", "GENAI_BASE_URL", "GEMINI_BASE_URL"])
@@ -1161,10 +1163,10 @@ mod tests {
     }
 
     #[test]
-    fn test_from_env_uses_complete_vertex_env_without_flag() {
+    fn test_from_env_uses_complete_vertex_env_without_flag_when_api_key_is_absent() {
         with_env(
             &[
-                ("GEMINI_API_KEY", Some("env-key")),
+                ("GEMINI_API_KEY", None),
                 ("GOOGLE_API_KEY", None),
                 ("GOOGLE_GENAI_USE_VERTEXAI", None),
                 ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
@@ -1177,6 +1179,28 @@ mod tests {
                 assert_eq!(
                     client.inner.api_client.base_url,
                     "https://us-central1-aiplatform.googleapis.com/"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_prefers_gemini_when_api_key_and_complete_vertex_env_exist() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", Some("env-key")),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", None),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::GeminiApi);
+                assert_eq!(client.inner.config.api_key.as_deref(), Some("env-key"));
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://generativelanguage.googleapis.com/"
                 );
             },
         );
