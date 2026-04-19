@@ -1,6 +1,6 @@
 //! Models API surface.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::BuildHasher;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -18,7 +18,8 @@ use rust_genai_types::models::{
     ReferenceImage, SegmentImageConfig, SegmentImageResponse, SegmentImageSource,
     UpdateModelConfig,
 };
-use rust_genai_types::response::GenerateContentResponse;
+use rust_genai_types::response::{GenerateContentResponse, GenerateContentResponseUsageMetadata};
+use serde::de::DeserializeOwned;
 
 use crate::afc::{
     call_callable_tools, max_remote_calls, resolve_callable_tools, should_append_history,
@@ -60,6 +61,87 @@ use parsers::{
 #[derive(Clone)]
 pub struct Models {
     pub(crate) inner: Arc<ClientInner>,
+}
+
+#[derive(Debug, Clone)]
+pub enum GenerateContentStreamEvent {
+    Text(String),
+    FunctionCall(FunctionCall),
+    Usage(GenerateContentResponseUsageMetadata),
+    Response(GenerateContentResponse),
+    Done(GenerateContentResponse),
+}
+
+pub struct GenerateContentEventStream {
+    inner: Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>,
+    pending: VecDeque<GenerateContentStreamEvent>,
+    last_response: Option<GenerateContentResponse>,
+    finished: bool,
+}
+
+impl GenerateContentEventStream {
+    fn new(inner: Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>) -> Self {
+        Self {
+            inner,
+            pending: VecDeque::new(),
+            last_response: None,
+            finished: false,
+        }
+    }
+
+    pub async fn next_event(&mut self) -> Result<Option<GenerateContentStreamEvent>> {
+        loop {
+            if let Some(event) = self.pending.pop_front() {
+                return Ok(Some(event));
+            }
+
+            if self.finished {
+                return Ok(None);
+            }
+
+            match self.inner.next().await {
+                Some(Ok(response)) => {
+                    self.last_response = Some(response.clone());
+                    enqueue_stream_events(&mut self.pending, response);
+                }
+                Some(Err(err)) => {
+                    self.finished = true;
+                    return Err(err);
+                }
+                None => {
+                    self.finished = true;
+                    if let Some(response) = self.last_response.take() {
+                        return Ok(Some(GenerateContentStreamEvent::Done(response)));
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+    }
+}
+
+fn enqueue_stream_events(
+    pending: &mut VecDeque<GenerateContentStreamEvent>,
+    response: GenerateContentResponse,
+) {
+    for candidate in &response.candidates {
+        if let Some(content) = &candidate.content {
+            for part in &content.parts {
+                if let Some(text) = part.text_value() {
+                    pending.push_back(GenerateContentStreamEvent::Text(text.to_string()));
+                }
+                if let Some(call) = part.function_call_ref() {
+                    pending.push_back(GenerateContentStreamEvent::FunctionCall(call.clone()));
+                }
+            }
+        }
+    }
+
+    if let Some(usage) = response.usage_metadata.clone() {
+        pending.push_back(GenerateContentStreamEvent::Usage(usage));
+    }
+
+    pending.push_back(GenerateContentStreamEvent::Response(response));
 }
 
 struct CallableStreamContext<S> {
@@ -239,6 +321,48 @@ impl Models {
     ) -> Result<GenerateContentResponse> {
         self.generate_content_with_config(model, contents, GenerateContentConfig::default())
             .await
+    }
+
+    /// 生成并解析 JSON 响应。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容或 JSON 解析失败时返回错误。
+    pub async fn generate_json<T: DeserializeOwned>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+    ) -> Result<T> {
+        self.generate_json_with_config(model, contents, GenerateContentConfig::default())
+            .await
+    }
+
+    /// 生成并解析 JSON 响应（自定义配置）。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容或 JSON 解析失败时返回错误。
+    pub async fn generate_json_with_config<T: DeserializeOwned>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+        mut config: GenerateContentConfig,
+    ) -> Result<T> {
+        let generation_config = config
+            .generation_config
+            .get_or_insert_with(Default::default);
+        if generation_config.response_mime_type.is_none() {
+            generation_config.response_mime_type = Some("application/json".into());
+        }
+
+        let response = self
+            .generate_content_with_config(model, contents, config)
+            .await?;
+        let text = response.text().ok_or_else(|| Error::Parse {
+            message: "Expected text response containing JSON".into(),
+        })?;
+
+        Ok(serde_json::from_str(&text)?)
     }
 
     /// 生成内容（自定义配置）。
@@ -554,6 +678,23 @@ impl Models {
             })
         });
         Ok(Box::pin(stream))
+    }
+
+    /// 生成内容事件流。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、配置校验失败或响应解析失败时返回错误。
+    pub async fn generate_content_event_stream(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+        config: GenerateContentConfig,
+    ) -> Result<GenerateContentEventStream> {
+        let stream = self
+            .generate_content_stream(model, contents, config)
+            .await?;
+        Ok(GenerateContentEventStream::new(stream))
     }
 
     /// 生成嵌入向量（默认配置）。

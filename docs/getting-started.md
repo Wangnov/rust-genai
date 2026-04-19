@@ -42,7 +42,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-3-flash-preview", vec![Content::text("你好，Rust!")])
+        .generate_content("gemini-2.5-flash-lite", vec![Content::text("你好，Rust!")])
         .await?;
 
     println!("{:?}", response.text());
@@ -63,7 +63,7 @@ async fn main() -> rust_genai::Result<()> {
     let mut stream = client
         .models()
         .generate_content_stream(
-            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
             vec![Content::text("用三句话介绍 Rust")],
             Default::default(),
         )

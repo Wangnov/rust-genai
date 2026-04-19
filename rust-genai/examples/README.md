@@ -24,6 +24,8 @@ cargo run --example generate_content_basic
 
 - generate_content_basic
 - generate_content_stream
+- generate_content_events
+- generate_json
 - list_models
 - embed_content
 - count_tokens

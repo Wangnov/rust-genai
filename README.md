@@ -20,6 +20,8 @@
 - 支持 Gemini API 和 Vertex AI 后端
 - Models、Chats、Files、Caches、Batches、Operations API
 - 流式响应（SSE）
+- 结构化 JSON 生成辅助（`generate_json`）
+- 事件级流式辅助（`generate_content_event_stream`）
 - 函数调用和工具系统
 - 自动函数调用（AFC）与可调用工具
 - Live API、会话恢复、Live Music（实验性）
@@ -56,7 +58,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-3-flash-preview", vec![Content::text("你好，Rust!")])
+        .generate_content("gemini-2.5-flash-lite", vec![Content::text("你好，Rust!")])
         .await?;
     println!("{response:?}");
     Ok(())
@@ -72,6 +74,7 @@ async fn main() -> rust_genai::Result<()> {
 - 错误处理：`docs/error-handling.md`
 - Retry / Timeout：`docs/retry-timeout.md`
 - 版本与稳定性：`docs/versioning.md`
+- LLM 代码生成说明：`llms.txt`
 - 官方来源清单：`docs/official-sources.md`
 - 规范同步：`docs/spec-sync.md`
 - 最佳实践：`docs/best-practices.md`
@@ -119,6 +122,8 @@ Rust SDK for the Google Gemini API and Vertex AI. This workspace aims to stay fe
 - Gemini API and Vertex AI backends
 - Models, Chats, Files, Caches, Batches, Operations
 - Streaming (SSE)
+- Structured JSON generation helper (`generate_json`)
+- Event-level streaming helper (`generate_content_event_stream`)
 - Function calling and tool system
 - Automatic function calling (AFC) with callable tools
 - Live API, session resumption, and Live Music (experimental)
@@ -155,7 +160,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-3-flash-preview", vec![Content::text("Hello from Rust!")])
+        .generate_content("gemini-2.5-flash-lite", vec![Content::text("Hello from Rust!")])
         .await?;
     println!("{response:?}");
     Ok(())
@@ -171,6 +176,7 @@ async fn main() -> rust_genai::Result<()> {
 - Error Handling: `docs/error-handling.md`
 - Retry / Timeout: `docs/retry-timeout.md`
 - Versioning and Stability: `docs/versioning.md`
+- LLM Codegen Notes: `llms.txt`
 - Official Sources: `docs/official-sources.md`
 - Spec Sync: `docs/spec-sync.md`
 - Best Practices: `docs/best-practices.md`

@@ -51,12 +51,63 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def render_spec_diff_report(
+    generated_at: str,
+    manifest_sources: list[dict[str, object]],
+    previous_hashes: dict[str, str],
+) -> str:
+    lines = [
+        "# Spec Diff Report",
+        "",
+        f"Generated at: `{generated_at}`",
+        "",
+        "| File | Status | Previous SHA256 | Current SHA256 |",
+        "|------|--------|-----------------|----------------|",
+    ]
+
+    for source in manifest_sources:
+        file_name = str(source["file"])
+        current_sha = str(source["sha256"])
+        previous_sha = previous_hashes.get(file_name)
+        if previous_sha is None:
+            status = "new"
+            previous_value = "-"
+        elif previous_sha == current_sha:
+            status = "unchanged"
+            previous_value = previous_sha
+        else:
+            status = "updated"
+            previous_value = previous_sha
+        lines.append(
+            f"| `{file_name}` | {status} | `{previous_value}` | `{current_sha}` |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "Use this report together with `git diff -- spec` during review.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def main() -> int:
     SPEC_DIR.mkdir(parents=True, exist_ok=True)
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     manifest_sources = []
     changed_files: list[str] = []
+    manifest_path = SPEC_DIR / "manifest.json"
+    previous_manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.exists()
+        else None
+    )
+    previous_hashes = {
+        entry["file"]: entry["sha256"]
+        for entry in previous_manifest.get("sources", [])
+    } if previous_manifest else {}
 
     for source in SOURCES:
         target = SPEC_DIR / source["file"]
@@ -80,13 +131,21 @@ def main() -> int:
         "sources": manifest_sources,
     }
     manifest_text = json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    manifest_path = SPEC_DIR / "manifest.json"
-    previous_manifest = (
-        manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+    previous_manifest_text = (
+        json.dumps(previous_manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        if previous_manifest
+        else None
     )
-    if previous_manifest != manifest_text:
+    if previous_manifest_text != manifest_text:
         changed_files.append("manifest.json")
     manifest_path.write_text(manifest_text, encoding="utf-8")
+
+    report_text = render_spec_diff_report(generated_at, manifest_sources, previous_hashes)
+    report_path = SPEC_DIR / "spec-diff.md"
+    previous_report = report_path.read_text(encoding="utf-8") if report_path.exists() else None
+    if previous_report != report_text:
+        changed_files.append("spec-diff.md")
+    report_path.write_text(report_text, encoding="utf-8")
 
     if changed_files:
         print("Updated:", ", ".join(changed_files))

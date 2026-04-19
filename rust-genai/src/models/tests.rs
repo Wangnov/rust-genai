@@ -19,6 +19,7 @@ use rust_genai_types::models::{
 use rust_genai_types::tool::{
     CodeExecution, FunctionCallingConfig, FunctionDeclaration, Tool, ToolConfig,
 };
+use serde::Deserialize;
 use serde_json::json;
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -563,6 +564,93 @@ fn stream_request_config() -> GenerateContentConfig {
         )])),
         ..Default::default()
     }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct JsonSmokeResponse {
+    ok: bool,
+}
+
+#[tokio::test]
+async fn test_generate_json_parses_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-1.5-pro:generateContent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "{\"ok\":true}"}]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+
+    let parsed = client
+        .models()
+        .generate_json::<JsonSmokeResponse>("gemini-1.5-pro", vec![Content::text("return json")])
+        .await
+        .unwrap();
+
+    assert_eq!(parsed, JsonSmokeResponse { ok: true });
+}
+
+#[tokio::test]
+async fn test_generate_content_event_stream_emits_text_response_and_done() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-1.5-pro:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi\"}]}}]}\n\n\
+                     data: [DONE]\n\n",
+                ),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+    let mut stream = client
+        .models()
+        .generate_content_event_stream(
+            "gemini-1.5-pro",
+            vec![Content::text("hi")],
+            GenerateContentConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    let first = stream.next_event().await.unwrap().unwrap();
+    let second = stream.next_event().await.unwrap().unwrap();
+    let third = stream.next_event().await.unwrap().unwrap();
+    let fourth = stream.next_event().await.unwrap();
+
+    assert!(matches!(first, GenerateContentStreamEvent::Text(ref text) if text == "Hi"));
+    assert!(matches!(
+        second,
+        GenerateContentStreamEvent::Response(ref response) if response.text() == Some("Hi".to_string())
+    ));
+    assert!(matches!(
+        third,
+        GenerateContentStreamEvent::Done(ref response) if response.text() == Some("Hi".to_string())
+    ));
+    assert!(fourth.is_none());
 }
 
 #[tokio::test]
