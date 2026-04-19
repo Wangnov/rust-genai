@@ -751,6 +751,51 @@ async fn test_generate_content_event_stream_emits_text_response_and_done() {
 }
 
 #[tokio::test]
+async fn test_generate_content_event_stream_skips_done_on_plain_eof() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-1.5-pro:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi\"}]}}]}\n\n",
+                ),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+    let mut stream = client
+        .models()
+        .generate_content_event_stream(
+            "gemini-1.5-pro",
+            vec![Content::text("hi")],
+            GenerateContentConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    let first = stream.next_event().await.unwrap().unwrap();
+    let second = stream.next_event().await.unwrap().unwrap();
+    let third = stream.next_event().await.unwrap();
+
+    assert!(matches!(first, GenerateContentStreamEvent::Text(ref text) if text == "Hi"));
+    assert!(matches!(
+        second,
+        GenerateContentStreamEvent::Response(ref response) if response.text() == Some("Hi".to_string())
+    ));
+    assert!(third.is_none());
+}
+
+#[tokio::test]
 async fn test_generate_content_event_stream_emits_function_call_and_usage() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

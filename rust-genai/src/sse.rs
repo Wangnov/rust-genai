@@ -3,6 +3,8 @@
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -157,6 +159,7 @@ pub struct SseJsonStream<T> {
     decoder: SseDecoder,
     pending: VecDeque<Result<ServerSentEvent>>,
     done: bool,
+    done_signal: Option<Arc<AtomicBool>>,
     _marker: PhantomData<T>,
 }
 
@@ -166,11 +169,21 @@ impl<T> SseJsonStream<T> {
     /// 从 HTTP 响应创建 SSE 流。
     #[must_use]
     pub fn new(response: reqwest::Response) -> Self {
+        Self::with_done_signal(response, None)
+    }
+
+    /// 从 HTTP 响应创建带显式完成标记的 SSE 流。
+    #[must_use]
+    pub fn with_done_signal(
+        response: reqwest::Response,
+        done_signal: Option<Arc<AtomicBool>>,
+    ) -> Self {
         Self {
             stream: Box::pin(response.bytes_stream()),
             decoder: SseDecoder::new(),
             pending: VecDeque::new(),
             done: false,
+            done_signal,
             _marker: PhantomData,
         }
     }
@@ -190,6 +203,9 @@ where
                     Err(err) => return Poll::Ready(Some(Err(err))),
                     Ok(event) => {
                         if event.data == "[DONE]" {
+                            if let Some(done_signal) = &this.done_signal {
+                                done_signal.store(true, Ordering::Relaxed);
+                            }
                             this.done = true;
                             continue;
                         }
@@ -233,6 +249,18 @@ where
     T: DeserializeOwned,
 {
     SseJsonStream::new(response)
+}
+
+/// 泛型 SSE JSON 流解析器，支持追踪显式 `[DONE]` 标记。
+#[must_use]
+pub fn parse_sse_stream_with_done_signal<T>(
+    response: reqwest::Response,
+    done_signal: Arc<AtomicBool>,
+) -> SseJsonStream<T>
+where
+    T: DeserializeOwned,
+{
+    SseJsonStream::with_done_signal(response, Some(done_signal))
 }
 
 #[cfg(test)]
