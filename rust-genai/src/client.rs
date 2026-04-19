@@ -117,11 +117,11 @@ impl Client {
     /// # Errors
     /// 当环境变量缺失或构建客户端失败时返回错误。
     pub fn from_env() -> Result<Self> {
-        let vertex_opt_in = env_flag_enabled("GOOGLE_GENAI_USE_VERTEXAI");
+        let vertex_override = env_flag("GOOGLE_GENAI_USE_VERTEXAI");
         let vertex_project = first_nonempty_env(&["GOOGLE_CLOUD_PROJECT"]);
         let vertex_location = first_nonempty_env(&["GOOGLE_CLOUD_LOCATION"]);
         let has_complete_vertex_env = vertex_project.is_some() && vertex_location.is_some();
-        let use_vertex = vertex_opt_in || has_complete_vertex_env;
+        let use_vertex = vertex_override.unwrap_or(has_complete_vertex_env);
 
         let mut builder =
             if use_vertex {
@@ -845,16 +845,13 @@ fn first_nonempty_env(names: &[&str]) -> Option<String> {
     })
 }
 
-fn env_flag_enabled(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+fn env_flag(name: &str) -> Option<bool> {
+    let value = std::env::var(name).ok()?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn attach_retry_metadata(response: &mut reqwest::Response, attempts: u32, retryable: bool) {
@@ -1180,6 +1177,28 @@ mod tests {
                 assert_eq!(
                     client.inner.api_client.base_url,
                     "https://us-central1-aiplatform.googleapis.com/"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_explicit_false_prefers_gemini_even_with_complete_vertex_env() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", Some("env-key")),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", Some("false")),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::GeminiApi);
+                assert_eq!(client.inner.config.api_key.as_deref(), Some("env-key"));
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://generativelanguage.googleapis.com/"
                 );
             },
         );
