@@ -4,9 +4,11 @@ use crate::test_support::{
     test_client_inner_with_base as test_inner_with_base, test_vertex_inner_missing_config,
 };
 use futures_util::StreamExt;
+use rust_genai_types::config::{GenerationConfig, ThinkingConfig};
 use rust_genai_types::content::{
     Content, FunctionCall, FunctionResponse, FunctionResponseBlob, FunctionResponsePart, Part, Role,
 };
+use rust_genai_types::enums::{FunctionCallingMode, ThinkingLevel};
 use rust_genai_types::http::HttpOptions as TypesHttpOptions;
 use rust_genai_types::models::{
     AutomaticFunctionCallingConfig, ComputeTokensConfig, EditImageConfig, GenerateContentConfig,
@@ -14,9 +16,11 @@ use rust_genai_types::models::{
     RecontextImageSource, ReferenceImage, SegmentImageConfig, SegmentImageSource,
     UpscaleImageConfig,
 };
-use rust_genai_types::tool::{CodeExecution, FunctionDeclaration, Tool};
+use rust_genai_types::tool::{
+    CodeExecution, FunctionCallingConfig, FunctionDeclaration, Tool, ToolConfig,
+};
 use serde_json::json;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
@@ -380,6 +384,185 @@ async fn test_models_generate_content_vertex_and_errors() {
         .await
         .unwrap_err();
     assert!(matches!(err, Error::ApiError { .. }));
+}
+
+#[tokio::test]
+async fn test_generate_content_stream_uses_gemini_request_converter() {
+    let server = MockServer::start().await;
+    let expected_body = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": "hi"}]
+        }],
+        "systemInstruction": {
+            "role": "user",
+            "parts": [{"text": "system"}]
+        },
+        "generationConfig": {
+            "temperature": 0.5,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {
+                "thinkingLevel": "HIGH",
+                "includeThoughts": true
+            }
+        },
+        "tools": [{
+            "functionDeclarations": [{
+                "name": "lookup_weather",
+                "description": "Look up weather"
+            }]
+        }],
+        "toolConfig": {
+            "functionCallingConfig": {
+                "allowedFunctionNames": ["lookup_weather"],
+                "mode": "AUTO",
+                "streamFunctionCallArguments": true
+            }
+        },
+        "labels": {
+            "suite": "stream"
+        }
+    });
+
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-1.5-pro:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .and(body_json(expected_body))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n\
+                     data: [DONE]\n\n",
+                ),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+    let config = stream_request_config();
+
+    let mut stream = client
+        .models()
+        .generate_content_stream("gemini-1.5-pro", vec![Content::text("hi")], config)
+        .await
+        .unwrap();
+    let first = stream.next().await.unwrap().unwrap();
+    assert_eq!(first.text(), Some("ok".to_string()));
+}
+
+#[tokio::test]
+async fn test_generate_content_stream_uses_vertex_request_converter() {
+    let server = MockServer::start().await;
+    let expected_body = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": "hi"}]
+        }],
+        "systemInstruction": {
+            "role": "user",
+            "parts": [{"text": "system"}]
+        },
+        "generationConfig": {
+            "temperature": 0.5,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {
+                "thinkingLevel": "HIGH",
+                "includeThoughts": true
+            }
+        },
+        "tools": [{
+            "functionDeclarations": [{
+                "name": "lookup_weather",
+                "description": "Look up weather"
+            }]
+        }],
+        "toolConfig": {
+            "functionCallingConfig": {
+                "allowedFunctionNames": ["lookup_weather"],
+                "mode": "AUTO",
+                "streamFunctionCallArguments": true
+            }
+        },
+        "labels": {
+            "suite": "stream"
+        }
+    });
+
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta1/projects/proj/locations/loc/publishers/google/models/gemini-1.5-pro:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .and(body_json(expected_body))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n\
+                     data: [DONE]\n\n",
+                ),
+        )
+        .mount(&server)
+        .await;
+
+    let inner = test_inner_with_base(Backend::VertexAi, &server.uri(), "v1beta1");
+    let models = Models::new(Arc::new(inner));
+    let config = stream_request_config();
+
+    let mut stream = models
+        .generate_content_stream("gemini-1.5-pro", vec![Content::text("hi")], config)
+        .await
+        .unwrap();
+    let first = stream.next().await.unwrap().unwrap();
+    assert_eq!(first.text(), Some("ok".to_string()));
+}
+
+fn stream_request_config() -> GenerateContentConfig {
+    GenerateContentConfig {
+        system_instruction: Some(Content::text("system")),
+        generation_config: Some(GenerationConfig {
+            temperature: Some(0.5),
+            response_mime_type: Some("application/json".into()),
+            thinking_config: Some(ThinkingConfig {
+                thinking_level: Some(ThinkingLevel::High),
+                include_thoughts: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        tools: Some(vec![Tool {
+            function_declarations: Some(vec![FunctionDeclaration {
+                name: "lookup_weather".into(),
+                description: Some("Look up weather".into()),
+                parameters: None,
+                parameters_json_schema: None,
+                response: None,
+                response_json_schema: None,
+                behavior: None,
+            }]),
+            ..Default::default()
+        }]),
+        tool_config: Some(ToolConfig {
+            function_calling_config: Some(FunctionCallingConfig {
+                allowed_function_names: Some(vec!["lookup_weather".into()]),
+                mode: Some(FunctionCallingMode::Auto),
+                stream_function_call_arguments: Some(true),
+            }),
+            ..Default::default()
+        }),
+        labels: Some(std::collections::HashMap::from([(
+            "suite".to_string(),
+            "stream".to_string(),
+        )])),
+        ..Default::default()
+    }
 }
 
 #[tokio::test]

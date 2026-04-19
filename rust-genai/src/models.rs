@@ -537,7 +537,12 @@ impl Models {
         let mut url = build_model_method_url(&self.inner, &model, "streamGenerateContent")?;
         url.push_str("?alt=sse");
 
-        let request = self.inner.http.post(url).json(&request);
+        let body = match backend {
+            Backend::GeminiApi => converters::generate_content_request_to_mldev(&request)?,
+            Backend::VertexAi => converters::generate_content_request_to_vertex(&request)?,
+        };
+
+        let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
             return Err(Error::ApiError {

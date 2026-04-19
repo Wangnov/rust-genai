@@ -66,7 +66,9 @@ async fn main() -> rust_genai::Result<()> {
 ## 文档
 
 - 快速开始：`docs/getting-started.md`
+- 兼容矩阵：`docs/compatibility-matrix.md`
 - API 版本：`docs/api-versions.md`
+- 版本与稳定性：`docs/versioning.md`
 - 官方来源清单：`docs/official-sources.md`
 - 规范同步：`docs/spec-sync.md`
 - 最佳实践：`docs/best-practices.md`
@@ -77,6 +79,18 @@ async fn main() -> rust_genai::Result<()> {
 ## 示例
 
 查看 `rust-genai/examples/` 目录，涵盖核心功能、错误处理、性能与 Live Music。
+
+## 稳定性分层
+
+| Surface | Status | Scope |
+|---------|--------|-------|
+| Client、Models、Chats、Files、Caches、Batches、Operations、Tokens、Embeddings、SSE Streaming | Stable | 主线能力，遵循语义化版本演进 |
+| Interactions API | Beta | 接口跟随官方快速演进 |
+| Deep Research | Preview | 适合前沿工作流验证 |
+| Live Music | Experimental | 适合单独评估后接入 |
+| MCP (`feature = "mcp"`) | Experimental | 通过 feature gate 暴露，适合扩展集成 |
+
+详细说明见 `docs/versioning.md`。
 
 ## 工作区结构
 
@@ -148,7 +162,9 @@ async fn main() -> rust_genai::Result<()> {
 ## Documentation
 
 - Getting Started: `docs/getting-started.md`
+- Compatibility Matrix: `docs/compatibility-matrix.md`
 - API Versions: `docs/api-versions.md`
+- Versioning and Stability: `docs/versioning.md`
 - Official Sources: `docs/official-sources.md`
 - Spec Sync: `docs/spec-sync.md`
 - Best Practices: `docs/best-practices.md`
@@ -159,6 +175,18 @@ async fn main() -> rust_genai::Result<()> {
 ## Examples
 
 See `rust-genai/examples/` for core features, error handling, performance, and Live Music.
+
+## Stability Tiers
+
+| Surface | Status | Scope |
+|---------|--------|-------|
+| Client, Models, Chats, Files, Caches, Batches, Operations, Tokens, Embeddings, SSE streaming | Stable | Core paths follow semantic-versioned evolution |
+| Interactions API | Beta | Surface tracks official API changes quickly |
+| Deep Research | Preview | Suitable for early workflow validation |
+| Live Music | Experimental | Evaluate separately before wider adoption |
+| MCP (`feature = "mcp"`) | Experimental | Feature-gated integration surface |
+
+See `docs/versioning.md` for the release contract.
 
 ## Workspace Layout
 
