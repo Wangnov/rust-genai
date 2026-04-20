@@ -1,6 +1,7 @@
 use crate::client::{
     ApiClient, Backend, ClientConfig, ClientInner, Credentials, HttpOptions, VertexConfig,
 };
+use rust_genai_types::http::HttpRetryOptions;
 use std::sync::Mutex;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -44,7 +45,13 @@ pub fn test_client_inner_with_api_key(backend: Backend, api_key: Option<&str>) -
         api_key: api_key.map(ToString::to_string),
         backend,
         vertex_config,
-        http_options: HttpOptions::default(),
+        http_options: HttpOptions {
+            retry_options: Some(HttpRetryOptions {
+                attempts: Some(1),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         credentials: Credentials::ApiKey("test-key".into()),
         auth_scopes: Vec::new(),
     };
@@ -74,6 +81,10 @@ pub fn test_client_inner_with_base(
     let http_options = HttpOptions {
         base_url: Some(base_url.to_string()),
         api_version: Some(api_version.to_string()),
+        retry_options: Some(HttpRetryOptions {
+            attempts: Some(1),
+            ..Default::default()
+        }),
         ..Default::default()
     };
     let config = ClientConfig {
@@ -98,7 +109,13 @@ pub fn test_vertex_inner_missing_config() -> ClientInner {
         api_key: None,
         backend: Backend::VertexAi,
         vertex_config: None,
-        http_options: HttpOptions::default(),
+        http_options: HttpOptions {
+            retry_options: Some(HttpRetryOptions {
+                attempts: Some(1),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         credentials: Credentials::ApplicationDefault,
         auth_scopes: Vec::new(),
     };

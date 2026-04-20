@@ -669,6 +669,37 @@ async fn test_generate_json_requires_text_response() {
 }
 
 #[tokio::test]
+async fn test_generate_json_rejects_non_json_mime_type() {
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url("http://localhost.invalid")
+        .build()
+        .unwrap();
+
+    let err = client
+        .models()
+        .generate_json_with_config::<JsonSmokeResponse>(
+            "gemini-1.5-pro",
+            vec![Content::text("return json")],
+            GenerateContentConfig {
+                generation_config: Some(GenerationConfig {
+                    response_mime_type: Some("text/plain".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        Error::InvalidConfig { ref message }
+            if message.contains("response_mime_type = application/json")
+    ));
+}
+
+#[tokio::test]
 async fn test_generate_json_rejects_invalid_json() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

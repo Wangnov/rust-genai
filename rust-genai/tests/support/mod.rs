@@ -5,12 +5,21 @@ use serde_json::json;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
+use rust_genai::types::http::HttpRetryOptions;
 use rust_genai::Client;
+
+fn disabled_retry_options() -> HttpRetryOptions {
+    HttpRetryOptions {
+        attempts: Some(1),
+        ..Default::default()
+    }
+}
 
 pub fn build_gemini_client(base_url: &str) -> Client {
     Client::builder()
         .api_key("test-key")
         .base_url(base_url)
+        .retry_options(disabled_retry_options())
         .build()
         .unwrap()
 }
@@ -20,6 +29,7 @@ pub fn build_gemini_client_with_version(base_url: &str, api_version: &str) -> Cl
         .api_key("test-key")
         .base_url(base_url)
         .api_version(api_version)
+        .retry_options(disabled_retry_options())
         .build()
         .unwrap()
 }

@@ -360,8 +360,18 @@ impl Models {
         let generation_config = config
             .generation_config
             .get_or_insert_with(Default::default);
-        if generation_config.response_mime_type.is_none() {
-            generation_config.response_mime_type = Some("application/json".into());
+        match generation_config.response_mime_type.as_deref() {
+            Some("application/json") => {}
+            Some(other) => {
+                return Err(Error::InvalidConfig {
+                    message: format!(
+                        "generate_json_with_config requires response_mime_type = application/json, got {other}"
+                    ),
+                });
+            }
+            None => {
+                generation_config.response_mime_type = Some("application/json".into());
+            }
         }
 
         let response = self

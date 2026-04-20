@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
@@ -667,6 +667,15 @@ const DEFAULT_RETRY_MAX_DELAY_SECS: f64 = 60.0;
 const DEFAULT_RETRY_EXP_BASE: f64 = 2.0;
 const DEFAULT_RETRY_JITTER: f64 = 1.0;
 const DEFAULT_RETRY_HTTP_STATUS_CODES: [u16; 6] = [408, 429, 500, 502, 503, 504];
+static DEFAULT_HTTP_RETRY_OPTIONS: LazyLock<HttpRetryOptions> =
+    LazyLock::new(|| HttpRetryOptions {
+        attempts: Some(DEFAULT_RETRY_ATTEMPTS),
+        initial_delay: Some(DEFAULT_RETRY_INITIAL_DELAY_SECS),
+        max_delay: Some(DEFAULT_RETRY_MAX_DELAY_SECS),
+        exp_base: Some(DEFAULT_RETRY_EXP_BASE),
+        jitter: Some(DEFAULT_RETRY_JITTER),
+        http_status_codes: Some(DEFAULT_RETRY_HTTP_STATUS_CODES.to_vec()),
+    });
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RetryMetadata {
@@ -694,18 +703,12 @@ impl ClientInner {
     ) -> Result<reqwest::Response> {
         let retry_options = request_http_options
             .and_then(|options| options.retry_options.as_ref())
-            .or(self.config.http_options.retry_options.as_ref());
+            .or(self.config.http_options.retry_options.as_ref())
+            .unwrap_or(&DEFAULT_HTTP_RETRY_OPTIONS);
 
         let request_template = request.build()?;
-        if let Some(options) = retry_options {
-            self.execute_with_retry(request_template, options).await
-        } else {
-            let mut response = self.execute_once(request_template).await?;
-            if !response.status().is_success() {
-                attach_retry_metadata_for_codes(&mut response, 1, &DEFAULT_RETRY_HTTP_STATUS_CODES);
-            }
-            Ok(response)
-        }
+        self.execute_with_retry(request_template, retry_options)
+            .await
     }
 
     async fn execute_once(&self, mut request: reqwest::Request) -> Result<reqwest::Response> {

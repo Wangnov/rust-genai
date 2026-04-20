@@ -69,6 +69,38 @@ async fn http_retry_global_retries_and_succeeds() {
 }
 
 #[tokio::test]
+async fn http_retry_defaults_retry_transient_errors() {
+    let server = MockServer::start().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("GET"))
+        .and(path("/v1beta/cachedContents"))
+        .respond_with(SequenceResponder {
+            calls: calls.clone(),
+            first: ResponseTemplate::new(500)
+                .insert_header("retry-after", "0")
+                .set_body_string("oops"),
+            second: ResponseTemplate::new(500)
+                .insert_header("retry-after", "0")
+                .set_body_string("oops"),
+        })
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .api_version("v1beta")
+        .build()
+        .unwrap();
+
+    let err = client.caches().list().await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 500);
+    assert_eq!(err.attempts(), Some(5));
+    assert!(err.is_retryable());
+    assert_eq!(calls.load(Ordering::SeqCst), 5);
+}
+
+#[tokio::test]
 async fn http_retry_per_request_retries_and_succeeds() {
     let server = MockServer::start().await;
     let calls = Arc::new(AtomicUsize::new(0));
@@ -88,6 +120,7 @@ async fn http_retry_per_request_retries_and_succeeds() {
         .api_key("test-key")
         .base_url(server.uri())
         .api_version("v1beta")
+        .retry_options(no_delay_retry_options(1, vec![429]))
         .build()
         .unwrap();
 
@@ -223,6 +256,7 @@ async fn http_retry_error_exposes_retry_metadata() {
         .api_key("test-key")
         .base_url(server.uri())
         .api_version("v1beta")
+        .retry_options(no_delay_retry_options(1, vec![429]))
         .build()
         .unwrap();
 
