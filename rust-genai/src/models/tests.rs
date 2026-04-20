@@ -1217,6 +1217,115 @@ fn test_merge_stream_response_preserves_sparse_candidates_without_index() {
 }
 
 #[test]
+fn test_merge_stream_response_merges_multi_candidate_chunks_without_index() {
+    let mut aggregate = None;
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("Hel")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("Wor")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+            ],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("lo")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("ld")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: Some("done".into()),
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+            ],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    let aggregate = aggregate.unwrap();
+    assert_eq!(aggregate.candidates.len(), 2);
+    assert_eq!(
+        aggregate.candidates[0]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("Hello")
+    );
+    assert_eq!(
+        aggregate.candidates[1]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("World")
+    );
+    assert_eq!(
+        aggregate.candidates[1].finish_message.as_deref(),
+        Some("done")
+    );
+}
+
+#[test]
 fn test_merge_stream_response_merges_indexed_candidate_metadata() {
     let mut aggregate = Some(GenerateContentResponse {
         sdk_http_response: None,
@@ -1868,6 +1977,38 @@ fn test_stream_merge_helpers_respect_context_and_targets() {
         &FunctionCall {
             id: None,
             name: Some("search".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }
+    ));
+    assert!(!function_calls_share_target(
+        &FunctionCall {
+            id: Some("call-1".into()),
+            name: None,
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        },
+        &FunctionCall {
+            id: None,
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }
+    ));
+    assert!(function_calls_share_target(
+        &FunctionCall {
+            id: Some("call-1".into()),
+            name: None,
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        },
+        &FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
             args: None,
             partial_args: None,
             will_continue: None,

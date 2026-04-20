@@ -1,6 +1,6 @@
 //! Models API surface.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::BuildHasher;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -211,10 +211,8 @@ fn merge_stream_response(
                         position,
                     )
                 })
-        } else if response.candidates.len() == 1 && aggregate.candidates.len() == 1 {
-            Some(position)
         } else {
-            None
+            unindexed_stream_position(&aggregate.candidates, response.candidates.len(), position)
         };
 
         if let Some(existing_position) = existing_position {
@@ -223,6 +221,26 @@ fn merge_stream_response(
             aggregate.candidates.push(candidate.clone());
         }
     }
+}
+
+fn unindexed_stream_position(
+    aggregate_candidates: &[rust_genai_types::response::Candidate],
+    response_candidate_count: usize,
+    position: usize,
+) -> Option<usize> {
+    if position >= aggregate_candidates.len() {
+        return None;
+    }
+
+    if response_candidate_count == 1 && aggregate_candidates.len() == 1 {
+        return Some(position);
+    }
+
+    if response_candidate_count == aggregate_candidates.len() {
+        return Some(position);
+    }
+
+    None
 }
 
 fn late_index_stream_position(
@@ -251,16 +269,7 @@ fn normalize_stream_candidate_order(response: &mut GenerateContentResponse) {
         return;
     }
 
-    let ordered_len = response
-        .candidates
-        .iter()
-        .filter_map(|candidate| candidate.index)
-        .filter_map(|index| usize::try_from(index).ok())
-        .max()
-        .map(|index| index.saturating_add(1))
-        .unwrap_or(response.candidates.len())
-        .max(response.candidates.len());
-    let mut ordered = vec![None; ordered_len];
+    let mut indexed = BTreeMap::new();
     let mut unindexed = VecDeque::new();
     let mut overflow = VecDeque::new();
 
@@ -268,24 +277,37 @@ fn normalize_stream_candidate_order(response: &mut GenerateContentResponse) {
         match candidate
             .index
             .and_then(|index| usize::try_from(index).ok())
-            .filter(|&index| index < ordered.len())
         {
-            Some(index) if ordered[index].is_none() => ordered[index] = Some(candidate),
-            Some(_) => overflow.push_back(candidate),
+            Some(index) => match indexed.entry(index) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(candidate);
+                }
+                std::collections::btree_map::Entry::Occupied(_) => overflow.push_back(candidate),
+            },
             None if candidate.index.is_none() => unindexed.push_back(candidate),
             None => overflow.push_back(candidate),
         }
     }
 
-    for slot in &mut ordered {
-        if slot.is_none() {
-            *slot = unindexed.pop_front().or_else(|| overflow.pop_front());
+    let mut ordered = Vec::with_capacity(indexed.len() + unindexed.len() + overflow.len());
+    let mut cursor = 0usize;
+    for (index, candidate) in indexed {
+        let gap = index.saturating_sub(cursor);
+        for _ in 0..gap {
+            if let Some(candidate) = unindexed.pop_front() {
+                ordered.push(candidate);
+            } else {
+                break;
+            }
         }
+
+        ordered.push(candidate);
+        cursor = index.saturating_add(1);
     }
 
-    response.candidates = ordered.into_iter().flatten().collect();
-    response.candidates.extend(unindexed);
-    response.candidates.extend(overflow);
+    ordered.extend(unindexed);
+    ordered.extend(overflow);
+    response.candidates = ordered;
 }
 
 fn merge_candidate(
@@ -457,18 +479,25 @@ fn video_metadata_matches(
 }
 
 fn function_calls_share_target(existing: &FunctionCall, next: &FunctionCall) -> bool {
-    if let (Some(existing_id), Some(next_id)) = (&existing.id, &next.id) {
+    let shared_id = if let (Some(existing_id), Some(next_id)) = (&existing.id, &next.id) {
         if existing_id != next_id {
             return false;
         }
-    }
-    if let (Some(existing_name), Some(next_name)) = (&existing.name, &next.name) {
+        true
+    } else {
+        false
+    };
+
+    let shared_name = if let (Some(existing_name), Some(next_name)) = (&existing.name, &next.name) {
         if existing_name != next_name {
             return false;
         }
-    }
+        true
+    } else {
+        false
+    };
 
-    existing.id.is_some() || next.id.is_some() || existing.name.is_some() || next.name.is_some()
+    shared_id || shared_name
 }
 
 fn merge_function_call(existing: &mut FunctionCall, next: &FunctionCall) {
