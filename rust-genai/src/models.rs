@@ -203,8 +203,9 @@ fn merge_stream_response(
                 .iter()
                 .position(|item| item.index == Some(index))
                 .or_else(|| {
-                    single_candidate_stream_position(
+                    late_index_stream_position(
                         &aggregate.candidates,
+                        index,
                         response.candidates.len(),
                         position,
                     )
@@ -223,8 +224,9 @@ fn merge_stream_response(
     }
 }
 
-fn single_candidate_stream_position(
+fn late_index_stream_position(
     aggregate_candidates: &[rust_genai_types::response::Candidate],
+    index: i32,
     response_candidate_count: usize,
     position: usize,
 ) -> Option<usize> {
@@ -232,10 +234,13 @@ fn single_candidate_stream_position(
         && aggregate_candidates.len() == 1
         && aggregate_candidates[0].index.is_none()
     {
-        Some(position)
-    } else {
-        None
+        return Some(position);
     }
+
+    usize::try_from(index)
+        .ok()
+        .filter(|&candidate_position| candidate_position < aggregate_candidates.len())
+        .filter(|&candidate_position| aggregate_candidates[candidate_position].index.is_none())
 }
 
 fn merge_candidate(

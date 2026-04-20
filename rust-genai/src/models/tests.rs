@@ -1471,6 +1471,101 @@ fn test_merge_stream_response_merges_single_candidate_when_index_appears_later()
 }
 
 #[test]
+fn test_merge_stream_response_merges_late_index_into_sparse_multi_candidate() {
+    let mut aggregate = None;
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("first")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("sec")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+            ],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![Candidate {
+                content: Some(Content::from_parts(vec![Part::text("ond")], Role::Model)),
+                citation_metadata: None,
+                finish_message: Some("done".into()),
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(1),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            }],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    let aggregate = aggregate.unwrap();
+    assert_eq!(aggregate.candidates.len(), 2);
+    assert_eq!(
+        aggregate.candidates[0]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("first")
+    );
+    assert_eq!(
+        aggregate.candidates[1]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("second")
+    );
+    assert_eq!(aggregate.candidates[1].index, Some(1));
+    assert_eq!(
+        aggregate.candidates[1].finish_message.as_deref(),
+        Some("done")
+    );
+}
+
+#[test]
 fn test_stream_merge_helpers_respect_context_and_targets() {
     let resolution_low = PartMediaResolution {
         level: Some(PartMediaResolutionLevel::MediaResolutionLow),
