@@ -1363,9 +1363,21 @@ fn test_merge_stream_response_merges_indexed_candidate_metadata() {
         create_time: None,
         automatic_function_calling_history: None,
         prompt_feedback: None,
-        usage_metadata: None,
-        model_version: None,
-        response_id: None,
+        usage_metadata: Some(GenerateContentResponseUsageMetadata {
+            cache_tokens_details: None,
+            cached_content_token_count: None,
+            candidates_token_count: None,
+            candidates_tokens_details: None,
+            prompt_token_count: Some(3),
+            prompt_tokens_details: None,
+            thoughts_token_count: None,
+            tool_use_prompt_token_count: None,
+            tool_use_prompt_tokens_details: None,
+            total_token_count: None,
+            traffic_type: None,
+        }),
+        model_version: Some("v1".into()),
+        response_id: Some("resp-0".into()),
     });
 
     merge_stream_response(
@@ -1494,6 +1506,14 @@ fn test_merge_stream_response_merges_indexed_candidate_metadata() {
     assert_eq!(
         aggregate.usage_metadata.as_ref().unwrap().total_token_count,
         Some(9)
+    );
+    assert_eq!(
+        aggregate
+            .usage_metadata
+            .as_ref()
+            .unwrap()
+            .prompt_token_count,
+        Some(3)
     );
     assert_eq!(aggregate.model_version.as_deref(), Some("v2"));
     assert_eq!(aggregate.response_id.as_deref(), Some("resp-1"));

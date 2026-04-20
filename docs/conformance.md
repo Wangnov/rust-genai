@@ -49,8 +49,8 @@ GEMINI_API_KEY=... cargo test -p rust-genai --test conformance live_gemini_ -- -
 Manual live Vertex suite:
 
 ```bash
-GOOGLE_CLOUD_PROJECT=...
-GOOGLE_CLOUD_LOCATION=...
+GOOGLE_CLOUD_PROJECT=... \
+GOOGLE_CLOUD_LOCATION=... \
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/adc.json \
   cargo test -p rust-genai --test conformance live_vertex_ -- --ignored --nocapture
 ```

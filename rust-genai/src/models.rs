@@ -187,8 +187,11 @@ fn merge_stream_response(
     if response.prompt_feedback.is_some() {
         aggregate.prompt_feedback = response.prompt_feedback.clone();
     }
-    if response.usage_metadata.is_some() {
-        aggregate.usage_metadata = response.usage_metadata.clone();
+    if let Some(next_usage) = &response.usage_metadata {
+        match &mut aggregate.usage_metadata {
+            Some(existing_usage) => merge_usage_metadata(existing_usage, next_usage),
+            None => aggregate.usage_metadata = Some(next_usage.clone()),
+        }
     }
     if response.model_version.is_some() {
         aggregate.model_version = response.model_version.clone();
@@ -220,6 +223,45 @@ fn merge_stream_response(
         } else {
             aggregate.candidates.push(candidate.clone());
         }
+    }
+}
+
+fn merge_usage_metadata(
+    existing: &mut GenerateContentResponseUsageMetadata,
+    next: &GenerateContentResponseUsageMetadata,
+) {
+    if next.cache_tokens_details.is_some() {
+        existing.cache_tokens_details = next.cache_tokens_details.clone();
+    }
+    if next.cached_content_token_count.is_some() {
+        existing.cached_content_token_count = next.cached_content_token_count;
+    }
+    if next.candidates_token_count.is_some() {
+        existing.candidates_token_count = next.candidates_token_count;
+    }
+    if next.candidates_tokens_details.is_some() {
+        existing.candidates_tokens_details = next.candidates_tokens_details.clone();
+    }
+    if next.prompt_token_count.is_some() {
+        existing.prompt_token_count = next.prompt_token_count;
+    }
+    if next.prompt_tokens_details.is_some() {
+        existing.prompt_tokens_details = next.prompt_tokens_details.clone();
+    }
+    if next.thoughts_token_count.is_some() {
+        existing.thoughts_token_count = next.thoughts_token_count;
+    }
+    if next.tool_use_prompt_token_count.is_some() {
+        existing.tool_use_prompt_token_count = next.tool_use_prompt_token_count;
+    }
+    if next.tool_use_prompt_tokens_details.is_some() {
+        existing.tool_use_prompt_tokens_details = next.tool_use_prompt_tokens_details.clone();
+    }
+    if next.total_token_count.is_some() {
+        existing.total_token_count = next.total_token_count;
+    }
+    if next.traffic_type.is_some() {
+        existing.traffic_type = next.traffic_type;
     }
 }
 

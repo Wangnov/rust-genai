@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       GENAI_CONFORMANCE_GEMINI_MODEL: ${{ vars.GENAI_CONFORMANCE_GEMINI_MODEL }}
     steps:
       - name: Checkout
@@ -47,8 +48,8 @@ jobs:
       - name: Run live Gemini conformance suite
         shell: bash
         run: |
-          if [ -z "${GEMINI_API_KEY}" ]; then
-            echo "Skipping live Gemini conformance: GEMINI_API_KEY is not configured."
+          if [ -z "${GEMINI_API_KEY}" ] && [ -z "${GOOGLE_API_KEY}" ]; then
+            echo "Skipping live Gemini conformance: GEMINI_API_KEY or GOOGLE_API_KEY is not configured."
             exit 0
           fi
           cargo test -p rust-genai --test conformance live_gemini_ -- --ignored --nocapture
