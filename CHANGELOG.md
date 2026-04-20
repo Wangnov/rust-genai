@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-20
+
+### Added
+- Models: add `generate_json` structured-output helper and event-stream examples for stream event consumption.
+- Docs: add dedicated auth, compatibility matrix, error handling, retry/timeout, and versioning guides plus `llms.txt`.
+- Validation: add a live Gemini smoke probe example and focused retry/stream/json coverage for the new SDK contracts.
+
+### Changed
+- Client: align `Client::from_env()` with official Vertex environment variables (`GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GENAI_API_VERSION`).
+- Client: enable SDK default automatic retries for `408`, `429`, `500`, `502`, `503`, and `504` with bounded delay handling.
+- Models: route streaming requests through backend-specific Gemini API and Vertex AI converters for schema parity with non-streaming calls.
+- Release: verify publishability with `cargo package --workspace` in release candidate and release workflows.
+
+### Fixed
+- Errors: preserve structured API error metadata, parse `Retry-After` delay values, and bound retained headers/body metadata for safer diagnostics.
+- Models: join segmented text parts for JSON parsing, enforce `application/json` for `generate_json`, and emit stream completion only after an explicit SSE done event.
+- Backend selection: keep Gemini API precedence when an API key is configured and keep explicit Gemini/Vertex environment overrides deterministic.
+
 ## [0.3.0] - 2026-04-19
 
 ### Added
