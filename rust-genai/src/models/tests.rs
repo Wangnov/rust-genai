@@ -2080,6 +2080,22 @@ fn test_stream_merge_helpers_respect_context_and_targets() {
             will_continue: Some(true),
         }
     ));
+    assert!(function_calls_share_target(
+        &FunctionCall {
+            id: None,
+            name: None,
+            args: Some(json!({"city": "Beijing"})),
+            partial_args: None,
+            will_continue: Some(true),
+        },
+        &FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: None,
+            will_continue: Some(false),
+        }
+    ));
 
     let mut merged_call_part = Part::function_call(lookup_call);
     assert!(merge_stream_part(
@@ -2104,6 +2120,29 @@ fn test_stream_merge_helpers_respect_context_and_targets() {
     assert_eq!(merged_call.id.as_deref(), Some("call-1"));
     assert_eq!(merged_call.name.as_deref(), Some("lookup"));
     assert_eq!(merged_call.will_continue, Some(true));
+
+    let mut anonymous_call_part = Part::function_call(FunctionCall {
+        id: None,
+        name: None,
+        args: Some(json!({"city": "Beijing"})),
+        partial_args: None,
+        will_continue: Some(true),
+    });
+    assert!(merge_stream_part(
+        Some(&mut anonymous_call_part),
+        &Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: None,
+            will_continue: Some(false),
+        })
+    ));
+    let merged_anonymous_call = anonymous_call_part.function_call_ref().unwrap();
+    assert_eq!(merged_anonymous_call.id.as_deref(), Some("call-1"));
+    assert_eq!(merged_anonymous_call.name.as_deref(), Some("lookup"));
+    assert_eq!(merged_anonymous_call.args, Some(json!({"city": "Beijing"})));
+    assert_eq!(merged_anonymous_call.will_continue, Some(false));
 
     let mut finalized_call = FunctionCall {
         id: None,

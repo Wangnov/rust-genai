@@ -555,7 +555,7 @@ fn function_calls_share_target(existing: &FunctionCall, next: &FunctionCall) -> 
     }
 
     if !function_call_has_identifier(existing) {
-        return function_call_accepts_identifierless_delta(existing);
+        return function_call_accepts_late_identifier(existing);
     }
 
     false
@@ -567,6 +567,10 @@ fn function_call_has_identifier(call: &FunctionCall) -> bool {
 
 fn function_call_accepts_identifierless_delta(call: &FunctionCall) -> bool {
     call.will_continue != Some(false) && call.args.is_none()
+}
+
+fn function_call_accepts_late_identifier(call: &FunctionCall) -> bool {
+    call.will_continue != Some(false)
 }
 
 fn merge_function_call(existing: &mut FunctionCall, next: &FunctionCall) {
