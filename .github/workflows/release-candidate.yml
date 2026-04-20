@@ -34,11 +34,5 @@ jobs:
       - name: Cargo test (all features)
         run: cargo test --all-features --all-targets
 
-      - name: Verify rust-genai-types package
-        run: cargo package -p rust-genai-types
-
-      - name: Verify rust-genai package
-        run: cargo package -p rust-genai
-
-      - name: Verify rust-genai-macros package
-        run: cargo package -p rust-genai-macros
+      - name: Verify workspace packages
+        run: cargo package --workspace

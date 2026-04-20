@@ -36,16 +36,15 @@ git push origin vX.Y.Z
 `release-candidate.yml` 会在三个平台上执行：
 
 1. `cargo test --all-features --all-targets`
-2. `cargo package -p rust-genai-types`
-3. `cargo package -p rust-genai`
-4. `cargo package -p rust-genai-macros`
+2. `cargo package --workspace`
 
 `release.yml` 会在收到 tag 后按顺序执行：
 
-1. `cargo package/publish -p rust-genai-types`
-2. `cargo package/publish -p rust-genai`
-3. `cargo package/publish -p rust-genai-macros`
-4. 生成/更新对应 GitHub Release Notes
+1. `cargo package --workspace`
+2. `cargo publish -p rust-genai-types`
+3. `cargo publish -p rust-genai`
+4. `cargo publish -p rust-genai-macros`
+5. 生成/更新对应 GitHub Release Notes
 
 ## 发版前检查
 

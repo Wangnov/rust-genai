@@ -27,8 +27,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Verify rust-genai-types
-        run: cargo package -p rust-genai-types
+      - name: Verify workspace packages
+        run: cargo package --workspace
 
       - name: Publish rust-genai-types
         run: cargo publish -p rust-genai-types
@@ -36,17 +36,11 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
 
-      - name: Verify rust-genai
-        run: cargo package -p rust-genai
-
       - name: Publish rust-genai
         run: cargo publish -p rust-genai
 
       - name: Wait for crates.io index update
         run: sleep 30
-
-      - name: Verify rust-genai-macros
-        run: cargo package -p rust-genai-macros
 
       - name: Publish rust-genai-macros
         run: cargo publish -p rust-genai-macros
