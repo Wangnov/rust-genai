@@ -1479,6 +1479,49 @@ mod tests {
         assert!((110.0..=120.0).contains(&delay));
     }
 
+    #[cfg(feature = "tracing")]
+    #[test]
+    fn test_tracing_helpers_extract_backend_and_model() {
+        assert_eq!(backend_name(Backend::GeminiApi), "gemini");
+        assert_eq!(backend_name(Backend::VertexAi), "vertex");
+        assert_eq!(
+            trace_model_name("/v1beta/models/gemini-2.5-flash:generateContent"),
+            Some("gemini-2.5-flash")
+        );
+        assert_eq!(trace_model_name("/v1beta/files"), None);
+    }
+
+    #[cfg(feature = "tracing")]
+    #[tokio::test]
+    async fn test_emit_request_trace_handles_retry_metadata() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/trace"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header(reqwest::header::RETRY_AFTER.as_str(), "3")
+                    .set_body_string("retry"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Client::new("test-key").unwrap();
+        let request = client
+            .inner
+            .http
+            .get(format!("{}/trace", server.uri()))
+            .build()
+            .unwrap();
+        let trace_request = TraceRequestInfo::new(Backend::GeminiApi, &request);
+        let response = client.inner.http.execute(request).await.unwrap();
+
+        emit_request_trace(
+            &trace_request,
+            TraceAttemptInfo::new(2, 5, Duration::from_millis(25), true),
+            &response,
+        );
+    }
+
     #[tokio::test]
     async fn test_send_with_http_options_preserves_custom_retry_metadata_without_retries() {
         let server = MockServer::start().await;

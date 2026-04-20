@@ -116,13 +116,14 @@ pub fn build_live_vertex_client() -> rust_genai::Result<Client> {
 }
 
 pub fn live_gemini_model() -> String {
-    std::env::var("GENAI_CONFORMANCE_GEMINI_MODEL")
-        .unwrap_or_else(|_| "gemini-2.5-flash-lite".to_string())
+    env_or_default("GENAI_CONFORMANCE_GEMINI_MODEL", "gemini-2.5-flash-lite")
 }
 
 pub fn live_vertex_model() -> String {
-    std::env::var("GENAI_CONFORMANCE_VERTEX_MODEL")
-        .unwrap_or_else(|_| "publishers/google/models/gemini-2.5-flash-lite".to_string())
+    env_or_default(
+        "GENAI_CONFORMANCE_VERTEX_MODEL",
+        "publishers/google/models/gemini-2.5-flash-lite",
+    )
 }
 
 pub fn expensive_opt_in() -> bool {
@@ -144,6 +145,10 @@ fn first_nonempty_env(names: &[&str]) -> Option<String> {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
     })
+}
+
+fn env_or_default(name: &str, default: &str) -> String {
+    first_nonempty_env(&[name]).unwrap_or_else(|| default.to_string())
 }
 
 fn env_flag(name: &str) -> bool {
@@ -265,4 +270,73 @@ pub async fn mount_default_mock(server: &MockServer) {
         })
         .mount(server)
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_env(vars: &[(&str, Option<&str>)], f: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let backup: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect();
+
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        f();
+
+        for (key, value) in backup {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn live_gemini_model_uses_default_for_blank_override() {
+        with_env(&[("GENAI_CONFORMANCE_GEMINI_MODEL", Some("   "))], || {
+            assert_eq!(live_gemini_model(), "gemini-2.5-flash-lite");
+        });
+    }
+
+    #[test]
+    fn live_vertex_model_uses_default_for_blank_override() {
+        with_env(&[("GENAI_CONFORMANCE_VERTEX_MODEL", Some(""))], || {
+            assert_eq!(
+                live_vertex_model(),
+                "publishers/google/models/gemini-2.5-flash-lite"
+            );
+        });
+    }
+
+    #[test]
+    fn live_model_helpers_preserve_trimmed_override() {
+        with_env(
+            &[
+                ("GENAI_CONFORMANCE_GEMINI_MODEL", Some(" gemini-custom ")),
+                (
+                    "GENAI_CONFORMANCE_VERTEX_MODEL",
+                    Some(" publishers/google/models/gemini-custom "),
+                ),
+            ],
+            || {
+                assert_eq!(live_gemini_model(), "gemini-custom");
+                assert_eq!(
+                    live_vertex_model(),
+                    "publishers/google/models/gemini-custom"
+                );
+            },
+        );
+    }
 }

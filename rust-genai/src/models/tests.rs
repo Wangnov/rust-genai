@@ -6,18 +6,32 @@ use crate::test_support::{
 use futures_util::StreamExt;
 use rust_genai_types::config::{GenerationConfig, ThinkingConfig};
 use rust_genai_types::content::{
-    Content, FunctionCall, FunctionResponse, FunctionResponseBlob, FunctionResponsePart, Part, Role,
+    Content, FunctionCall, FunctionResponse, FunctionResponseBlob, FunctionResponsePart, Part,
+    PartMediaResolution, PartialArg, Role, VideoMetadata,
 };
 use rust_genai_types::enums::{FunctionCallingMode, ThinkingLevel};
 use rust_genai_types::http::HttpOptions as TypesHttpOptions;
+use rust_genai_types::http::HttpResponse;
 use rust_genai_types::models::{
     AutomaticFunctionCallingConfig, ComputeTokensConfig, EditImageConfig, GenerateContentConfig,
     GenerateImagesConfig, GenerateVideosConfig, GenerateVideosSource, Image, RecontextImageConfig,
     RecontextImageSource, ReferenceImage, SegmentImageConfig, SegmentImageSource,
     UpscaleImageConfig,
 };
+use rust_genai_types::response::{
+    Candidate, GenerateContentResponse, GenerateContentResponseUsageMetadata, PromptFeedback,
+    SafetyRating, UrlContextMetadata, UrlMetadata,
+};
 use rust_genai_types::tool::{
     CodeExecution, FunctionCallingConfig, FunctionDeclaration, Tool, ToolConfig,
+};
+use rust_genai_types::{
+    enums::{
+        BlockedReason, FinishReason, HarmCategory, HarmProbability, PartMediaResolutionLevel,
+        UrlRetrievalStatus,
+    },
+    grounding::{Citation, CitationMetadata, GroundingMetadata},
+    logprobs::{LogprobCandidate, LogprobsResult, TopCandidates},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -1039,6 +1053,541 @@ async fn test_generate_content_event_stream_emits_function_call_and_usage() {
         fourth,
         GenerateContentStreamEvent::Done(ref response) if response.function_calls().len() == 1
     ));
+}
+
+#[tokio::test]
+async fn test_generate_content_event_stream_done_merges_function_call_fragments() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-1.5-pro:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"lookup\",\"partialArgs\":[{\"jsonPath\":\"$.city\",\"stringValue\":\"Bei\",\"willContinue\":true}],\"willContinue\":true}}]}}]}\n\n\
+                     data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"lookup\",\"partialArgs\":[{\"jsonPath\":\"$.city\",\"stringValue\":\"jing\",\"willContinue\":true}],\"willContinue\":true}}]}}]}\n\n\
+                     data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"lookup\",\"args\":{\"city\":\"Beijing\"},\"willContinue\":false}}]}}]}\n\n\
+                     data: [DONE]\n\n",
+                ),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+    let mut stream = client
+        .models()
+        .generate_content_event_stream(
+            "gemini-1.5-pro",
+            vec![Content::text("hi")],
+            GenerateContentConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    let mut done_response = None;
+    while let Some(event) = stream.next_event().await.unwrap() {
+        if let GenerateContentStreamEvent::Done(response) = event {
+            done_response = Some(response);
+            break;
+        }
+    }
+
+    let response = done_response.unwrap();
+    let calls = response.function_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].id.as_deref(), Some("call-1"));
+    assert_eq!(calls[0].name.as_deref(), Some("lookup"));
+    assert_eq!(calls[0].args, Some(json!({"city": "Beijing"})));
+    assert!(calls[0].partial_args.is_none());
+    assert_eq!(calls[0].will_continue, Some(false));
+}
+
+#[test]
+fn test_merge_stream_response_preserves_sparse_candidates_without_index() {
+    let mut aggregate = None;
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("first")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("second")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: None,
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+            ],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![Candidate {
+                content: Some(Content::from_parts(
+                    vec![Part::function_call(FunctionCall {
+                        id: None,
+                        name: Some("lookup".into()),
+                        args: None,
+                        partial_args: Some(vec![PartialArg {
+                            null_value: None,
+                            number_value: None,
+                            string_value: Some("fragment".into()),
+                            bool_value: None,
+                            json_path: Some("$.city".into()),
+                            will_continue: Some(true),
+                        }]),
+                        will_continue: Some(true),
+                    })],
+                    Role::Model,
+                )),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: None,
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            }],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    let aggregate = aggregate.unwrap();
+    assert_eq!(aggregate.candidates.len(), 3);
+    assert_eq!(
+        aggregate.candidates[0]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("first")
+    );
+    assert_eq!(
+        aggregate.candidates[1]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("second")
+    );
+    assert_eq!(aggregate.function_calls().len(), 1);
+}
+
+#[test]
+fn test_merge_stream_response_merges_indexed_candidate_metadata() {
+    let mut aggregate = Some(GenerateContentResponse {
+        sdk_http_response: None,
+        candidates: vec![
+            Candidate {
+                content: Some(Content {
+                    role: None,
+                    parts: vec![Part::text("first")],
+                }),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(7),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+            Candidate {
+                content: None,
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(8),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+        ],
+        create_time: None,
+        automatic_function_calling_history: None,
+        prompt_feedback: None,
+        usage_metadata: None,
+        model_version: None,
+        response_id: None,
+    });
+
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: Some(HttpResponse {
+                headers: None,
+                body: Some("{\"ok\":true}".into()),
+            }),
+            candidates: vec![
+                Candidate {
+                    content: Some(Content::from_parts(
+                        vec![Part::text(" second")],
+                        Role::Model,
+                    )),
+                    citation_metadata: Some(CitationMetadata {
+                        citations: Some(vec![Citation {
+                            end_index: Some(2),
+                            license: None,
+                            publication_date: None,
+                            start_index: Some(0),
+                            title: Some("cite".into()),
+                            uri: Some("https://example.com/cite".into()),
+                        }]),
+                    }),
+                    finish_message: Some("done".into()),
+                    token_count: Some(4),
+                    finish_reason: Some(FinishReason::Stop),
+                    avg_logprobs: Some(0.25),
+                    grounding_metadata: Some(GroundingMetadata::default()),
+                    index: Some(7),
+                    logprobs_result: Some(LogprobsResult {
+                        top_candidates: vec![TopCandidates {
+                            candidates: vec![LogprobCandidate {
+                                token: "first".into(),
+                                token_id: 1,
+                                log_probability: -0.1,
+                            }],
+                        }],
+                        chosen_candidates: Vec::new(),
+                        log_probability_sum: Some(-0.1),
+                    }),
+                    safety_ratings: vec![SafetyRating {
+                        category: HarmCategory::HarmCategoryHarassment,
+                        probability: HarmProbability::Low,
+                        blocked: Some(false),
+                        overwritten_threshold: None,
+                        probability_score: None,
+                        severity: None,
+                        severity_score: None,
+                    }],
+                    url_context_metadata: Some(UrlContextMetadata {
+                        url_metadata: Some(vec![UrlMetadata {
+                            retrieved_url: Some("https://example.com".into()),
+                            url_retrieval_status: Some(
+                                UrlRetrievalStatus::UrlRetrievalStatusSuccess,
+                            ),
+                        }]),
+                    }),
+                },
+                Candidate {
+                    content: Some(Content::from_parts(vec![Part::text("fresh")], Role::Model)),
+                    citation_metadata: None,
+                    finish_message: None,
+                    token_count: None,
+                    finish_reason: None,
+                    avg_logprobs: None,
+                    grounding_metadata: None,
+                    index: Some(8),
+                    logprobs_result: None,
+                    safety_ratings: Vec::new(),
+                    url_context_metadata: None,
+                },
+            ],
+            create_time: Some("2026-04-20T12:00:00Z".into()),
+            automatic_function_calling_history: Some(vec![Content::model("history")]),
+            prompt_feedback: Some(PromptFeedback {
+                block_reason: Some(BlockedReason::Other),
+                block_reason_message: Some("blocked".into()),
+                safety_ratings: Vec::new(),
+            }),
+            usage_metadata: Some(GenerateContentResponseUsageMetadata {
+                cache_tokens_details: None,
+                cached_content_token_count: None,
+                candidates_token_count: None,
+                candidates_tokens_details: None,
+                prompt_token_count: None,
+                prompt_tokens_details: None,
+                thoughts_token_count: None,
+                tool_use_prompt_token_count: None,
+                tool_use_prompt_tokens_details: None,
+                total_token_count: Some(9),
+                traffic_type: None,
+            }),
+            model_version: Some("v2".into()),
+            response_id: Some("resp-1".into()),
+        },
+    );
+
+    let aggregate = aggregate.unwrap();
+    assert_eq!(
+        aggregate
+            .sdk_http_response
+            .as_ref()
+            .unwrap()
+            .body
+            .as_deref(),
+        Some("{\"ok\":true}")
+    );
+    assert_eq!(
+        aggregate.create_time.as_deref(),
+        Some("2026-04-20T12:00:00Z")
+    );
+    assert_eq!(
+        aggregate
+            .automatic_function_calling_history
+            .as_ref()
+            .unwrap()[0]
+            .first_text(),
+        Some("history")
+    );
+    assert_eq!(
+        aggregate.prompt_feedback.as_ref().unwrap().block_reason,
+        Some(BlockedReason::Other)
+    );
+    assert_eq!(
+        aggregate.usage_metadata.as_ref().unwrap().total_token_count,
+        Some(9)
+    );
+    assert_eq!(aggregate.model_version.as_deref(), Some("v2"));
+    assert_eq!(aggregate.response_id.as_deref(), Some("resp-1"));
+
+    let merged = &aggregate.candidates[0];
+    assert_eq!(merged.content.as_ref().unwrap().role, Some(Role::Model));
+    assert_eq!(
+        merged.content.as_ref().unwrap().first_text(),
+        Some("first second")
+    );
+    assert_eq!(merged.finish_message.as_deref(), Some("done"));
+    assert_eq!(merged.token_count, Some(4));
+    assert_eq!(merged.finish_reason, Some(FinishReason::Stop));
+    assert_eq!(merged.avg_logprobs, Some(0.25));
+    assert!(merged.citation_metadata.is_some());
+    assert!(merged.grounding_metadata.is_some());
+    assert!(merged.logprobs_result.is_some());
+    assert_eq!(merged.safety_ratings.len(), 1);
+    assert!(merged.url_context_metadata.is_some());
+
+    let filled = &aggregate.candidates[1];
+    assert_eq!(filled.content.as_ref().unwrap().first_text(), Some("fresh"));
+}
+
+#[test]
+fn test_stream_merge_helpers_respect_context_and_targets() {
+    let resolution_low = PartMediaResolution {
+        level: Some(PartMediaResolutionLevel::MediaResolutionLow),
+        num_tokens: Some(1),
+    };
+    let resolution_medium = PartMediaResolution {
+        level: Some(PartMediaResolutionLevel::MediaResolutionMedium),
+        num_tokens: Some(2),
+    };
+    assert!(media_resolution_matches(&None, &None));
+    assert!(!media_resolution_matches(
+        &Some(resolution_low.clone()),
+        &Some(resolution_medium.clone())
+    ));
+    assert!(!media_resolution_matches(
+        &Some(resolution_low.clone()),
+        &None
+    ));
+
+    let video_a = VideoMetadata {
+        start_offset: Some("0s".into()),
+        end_offset: Some("1s".into()),
+        fps: Some(24.0),
+    };
+    let video_b = VideoMetadata {
+        start_offset: Some("0s".into()),
+        end_offset: Some("2s".into()),
+        fps: Some(24.0),
+    };
+    assert!(video_metadata_matches(&None, &None));
+    assert!(video_metadata_matches(
+        &Some(video_a.clone()),
+        &Some(video_a.clone())
+    ));
+    assert!(!video_metadata_matches(
+        &Some(video_a.clone()),
+        &Some(video_b)
+    ));
+    assert!(!video_metadata_matches(&Some(video_a.clone()), &None));
+
+    let lookup_call = FunctionCall {
+        id: Some("call-1".into()),
+        name: Some("lookup".into()),
+        args: None,
+        partial_args: Some(vec![PartialArg {
+            null_value: None,
+            number_value: None,
+            string_value: Some("Bei".into()),
+            bool_value: None,
+            json_path: Some("$.city".into()),
+            will_continue: Some(true),
+        }]),
+        will_continue: Some(true),
+    };
+    let search_call = FunctionCall {
+        id: None,
+        name: Some("search".into()),
+        args: None,
+        partial_args: None,
+        will_continue: None,
+    };
+    assert!(!function_calls_share_target(
+        &lookup_call,
+        &FunctionCall {
+            id: Some("call-2".into()),
+            ..lookup_call.clone()
+        }
+    ));
+    assert!(!function_calls_share_target(
+        &search_call,
+        &FunctionCall {
+            id: None,
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }
+    ));
+    assert!(function_calls_share_target(
+        &search_call,
+        &FunctionCall {
+            id: None,
+            name: Some("search".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }
+    ));
+
+    let mut merged_call_part = Part::function_call(lookup_call);
+    assert!(merge_stream_part(
+        Some(&mut merged_call_part),
+        &Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("jing".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        })
+    ));
+    let merged_call = merged_call_part.function_call_ref().unwrap();
+    assert_eq!(merged_call.partial_args.as_ref().unwrap().len(), 2);
+    assert_eq!(merged_call.id.as_deref(), Some("call-1"));
+    assert_eq!(merged_call.name.as_deref(), Some("lookup"));
+    assert_eq!(merged_call.will_continue, Some(true));
+
+    let mut finalized_call = FunctionCall {
+        id: None,
+        name: None,
+        args: None,
+        partial_args: Some(vec![PartialArg {
+            null_value: None,
+            number_value: None,
+            string_value: Some("stale".into()),
+            bool_value: None,
+            json_path: Some("$.city".into()),
+            will_continue: Some(true),
+        }]),
+        will_continue: None,
+    };
+    merge_function_call(
+        &mut finalized_call,
+        &FunctionCall {
+            id: Some("call-9".into()),
+            name: Some("lookup".into()),
+            args: Some(json!({"city": "Beijing"})),
+            partial_args: None,
+            will_continue: Some(false),
+        },
+    );
+    assert_eq!(finalized_call.id.as_deref(), Some("call-9"));
+    assert_eq!(finalized_call.name.as_deref(), Some("lookup"));
+    assert_eq!(finalized_call.args, Some(json!({"city": "Beijing"})));
+    assert!(finalized_call.partial_args.is_none());
+    assert_eq!(finalized_call.will_continue, Some(false));
+
+    let mut text_part = Part::text("hello");
+    assert!(!merge_stream_part(
+        Some(&mut text_part),
+        &Part::function_call(FunctionCall {
+            id: Some("call-9".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        })
+    ));
+    assert!(!merge_stream_part(None, &Part::text("next")));
+
+    let mut thought_part = Part::text("a").with_thought(true);
+    assert!(!merge_stream_part(
+        Some(&mut thought_part),
+        &Part::text("b")
+    ));
+
+    let mut resolution_part = Part::text("a").with_media_resolution(resolution_low);
+    assert!(!merge_stream_part(
+        Some(&mut resolution_part),
+        &Part::text("b").with_media_resolution(resolution_medium)
+    ));
+
+    let mut parts = vec![Part::text("a").with_video_metadata(video_a)];
+    merge_content_parts(
+        &mut parts,
+        &[Part::text("b").with_video_metadata(VideoMetadata {
+            start_offset: Some("0s".into()),
+            end_offset: Some("3s".into()),
+            fps: Some(24.0),
+        })],
+    );
+    assert_eq!(parts.len(), 2);
 }
 
 #[tokio::test]

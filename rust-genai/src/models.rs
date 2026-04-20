@@ -202,7 +202,7 @@ fn merge_stream_response(
                 .candidates
                 .iter()
                 .position(|item| item.index == Some(index))
-        } else if position < aggregate.candidates.len() {
+        } else if response.candidates.len() == 1 && aggregate.candidates.len() == 1 {
             Some(position)
         } else {
             None
@@ -266,36 +266,112 @@ fn merge_candidate(
 
 fn merge_content_parts(existing_parts: &mut Vec<Part>, next_parts: &[Part]) {
     for part in next_parts {
-        if let Some(buffer) = mergeable_text_buffer(existing_parts.last_mut(), part) {
-            if let PartKind::Text { text } = &part.kind {
-                buffer.push_str(text);
-                continue;
-            }
+        if merge_stream_part(existing_parts.last_mut(), part) {
+            continue;
         }
         existing_parts.push(part.clone());
     }
 }
 
-fn mergeable_text_buffer<'a>(
-    last_part: Option<&'a mut Part>,
-    next_part: &Part,
-) -> Option<&'a mut String> {
-    let last_part = last_part?;
-    if last_part.thought.is_some()
-        || last_part.thought_signature.is_some()
-        || last_part.media_resolution.is_some()
-        || last_part.video_metadata.is_some()
-        || next_part.thought.is_some()
-        || next_part.thought_signature.is_some()
-        || next_part.media_resolution.is_some()
-        || next_part.video_metadata.is_some()
-    {
-        return None;
+fn merge_stream_part(last_part: Option<&mut Part>, next_part: &Part) -> bool {
+    let Some(last_part) = last_part else {
+        return false;
+    };
+    if !parts_share_merge_context(last_part, next_part) {
+        return false;
     }
 
     match (&mut last_part.kind, &next_part.kind) {
-        (PartKind::Text { text: existing }, PartKind::Text { .. }) => Some(existing),
-        _ => None,
+        (PartKind::Text { text: existing }, PartKind::Text { text }) => {
+            existing.push_str(text.as_str());
+            true
+        }
+        (
+            PartKind::FunctionCall {
+                function_call: existing_call,
+            },
+            PartKind::FunctionCall {
+                function_call: next_call,
+            },
+        ) if function_calls_share_target(existing_call, next_call) => {
+            merge_function_call(existing_call, next_call);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn parts_share_merge_context(last_part: &Part, next_part: &Part) -> bool {
+    last_part.thought == next_part.thought
+        && last_part.thought_signature == next_part.thought_signature
+        && media_resolution_matches(&last_part.media_resolution, &next_part.media_resolution)
+        && video_metadata_matches(&last_part.video_metadata, &next_part.video_metadata)
+}
+
+fn media_resolution_matches(
+    left: &Option<rust_genai_types::content::PartMediaResolution>,
+    right: &Option<rust_genai_types::content::PartMediaResolution>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.level == right.level && left.num_tokens == right.num_tokens
+        }
+        _ => false,
+    }
+}
+
+fn video_metadata_matches(
+    left: &Option<rust_genai_types::content::VideoMetadata>,
+    right: &Option<rust_genai_types::content::VideoMetadata>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.start_offset == right.start_offset
+                && left.end_offset == right.end_offset
+                && left.fps == right.fps
+        }
+        _ => false,
+    }
+}
+
+fn function_calls_share_target(existing: &FunctionCall, next: &FunctionCall) -> bool {
+    if let (Some(existing_id), Some(next_id)) = (&existing.id, &next.id) {
+        if existing_id != next_id {
+            return false;
+        }
+    }
+    if let (Some(existing_name), Some(next_name)) = (&existing.name, &next.name) {
+        if existing_name != next_name {
+            return false;
+        }
+    }
+
+    existing.id.is_some() || next.id.is_some() || existing.name.is_some() || next.name.is_some()
+}
+
+fn merge_function_call(existing: &mut FunctionCall, next: &FunctionCall) {
+    if next.id.is_some() {
+        existing.id = next.id.clone();
+    }
+    if next.name.is_some() {
+        existing.name = next.name.clone();
+    }
+    if next.args.is_some() {
+        existing.args = next.args.clone();
+        if next.partial_args.is_none() {
+            existing.partial_args = None;
+        }
+    }
+    if let Some(partial_args) = &next.partial_args {
+        existing
+            .partial_args
+            .get_or_insert_with(Vec::new)
+            .extend(partial_args.clone());
+    }
+    if next.will_continue.is_some() {
+        existing.will_continue = next.will_continue;
     }
 }
 
