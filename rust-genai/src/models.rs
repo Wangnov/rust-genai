@@ -251,7 +251,16 @@ fn normalize_stream_candidate_order(response: &mut GenerateContentResponse) {
         return;
     }
 
-    let mut ordered = vec![None; response.candidates.len()];
+    let ordered_len = response
+        .candidates
+        .iter()
+        .filter_map(|candidate| candidate.index)
+        .filter_map(|index| usize::try_from(index).ok())
+        .max()
+        .map(|index| index.saturating_add(1))
+        .unwrap_or(response.candidates.len())
+        .max(response.candidates.len());
+    let mut ordered = vec![None; ordered_len];
     let mut unindexed = VecDeque::new();
     let mut overflow = VecDeque::new();
 

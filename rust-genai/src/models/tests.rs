@@ -1737,6 +1737,54 @@ fn test_normalize_stream_candidate_order_preserves_unindexed_gap_positions() {
 }
 
 #[test]
+fn test_normalize_stream_candidate_order_preserves_sparse_index_order() {
+    let mut response = GenerateContentResponse {
+        sdk_http_response: None,
+        candidates: vec![
+            Candidate {
+                content: Some(Content::from_parts(vec![Part::text("third")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(2),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+            Candidate {
+                content: Some(Content::from_parts(vec![Part::text("second")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(1),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+        ],
+        create_time: None,
+        automatic_function_calling_history: None,
+        prompt_feedback: None,
+        usage_metadata: None,
+        model_version: None,
+        response_id: None,
+    };
+
+    normalize_stream_candidate_order(&mut response);
+
+    assert_eq!(response.text().as_deref(), Some("second"));
+    assert_eq!(response.candidates.len(), 2);
+    assert_eq!(response.candidates[0].index, Some(1));
+    assert_eq!(response.candidates[1].index, Some(2));
+}
+
+#[test]
 fn test_stream_merge_helpers_respect_context_and_targets() {
     let resolution_low = PartMediaResolution {
         level: Some(PartMediaResolutionLevel::MediaResolutionLow),
