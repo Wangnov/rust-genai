@@ -21,6 +21,10 @@ match client.models().list().await {
 }
 ```
 
+Favor allowlisted fields such as `status`, `code`, `retry_after`, and
+`attempts` in production logs. Error bodies and headers can carry
+request-specific diagnostics or user-provided content.
+
 ## Useful Helpers
 
 - `status()` returns the HTTP status code when the failure came from an API.

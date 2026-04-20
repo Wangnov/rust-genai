@@ -1,8 +1,9 @@
 # Retry and Timeout
 
 `rust-genai` exposes timeout, proxy, and retry controls through `ClientBuilder`
-and per-request `HttpOptions`. Retries run when `retry_options` is configured
-on the client or on the request.
+and per-request `HttpOptions`. The SDK retries `408`, `429`, `500`, `502`,
+`503`, and `504` by default with exponential backoff. Client-level and
+per-request `retry_options` override that default policy.
 
 ## Global Client Settings
 

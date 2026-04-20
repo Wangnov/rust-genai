@@ -12,6 +12,9 @@
 
 **Language: 中文 | [English](#installation-1)**
 
+> 社区维护的 Rust SDK，用于 Google Gemini API 和 Vertex AI。
+> Google 维护官方 Go、JavaScript、Python SDK；本仓库提供社区维护的 Rust 实现。
+
 用于 Google Gemini API 和 Vertex AI 的 Rust SDK。本项目致力于与官方 Go、JavaScript、Python SDK 保持功能对齐，同时充分利用 Rust 的安全性和性能优势。
 
 ## 功能特性
@@ -19,6 +22,7 @@
 - 基于 Tokio 的异步优先客户端
 - 支持 Gemini API 和 Vertex AI 后端
 - Models、Chats、Files、Caches、Batches、Operations API
+- 默认自动重试 `408`、`429`、`500`、`502`、`503`、`504`
 - 流式响应（SSE）
 - 结构化 JSON 生成辅助（`generate_json`）
 - 事件级流式辅助（`generate_content_event_stream`）
@@ -114,6 +118,9 @@ Apache-2.0。详见 `LICENSE`。
 
 **Language: [中文](#rust-gemini-sdk-rust-genai) | English**
 
+> Community-maintained Rust SDK for the Google Gemini API and Vertex AI.
+> Google maintains the official Go, JavaScript, and Python SDKs; this repository provides the community-maintained Rust implementation.
+
 Rust SDK for the Google Gemini API and Vertex AI. This workspace aims to stay feature-aligned with the official Go, JavaScript, and Python SDKs while taking advantage of Rust's safety and performance.
 
 ## Features
@@ -121,6 +128,7 @@ Rust SDK for the Google Gemini API and Vertex AI. This workspace aims to stay fe
 - Async-first client with Tokio
 - Gemini API and Vertex AI backends
 - Models, Chats, Files, Caches, Batches, Operations
+- Default automatic retries for `408`, `429`, `500`, `502`, `503`, and `504`
 - Streaming (SSE)
 - Structured JSON generation helper (`generate_json`)
 - Event-level streaming helper (`generate_content_event_stream`)
