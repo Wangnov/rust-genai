@@ -288,13 +288,39 @@ fn merge_candidate(
 
 fn merge_content_parts(existing_parts: &mut Vec<Part>, next_parts: &[Part]) {
     for (position, part) in next_parts.iter().enumerate() {
-        if existing_parts
-            .get_mut(position)
-            .is_some_and(|existing_part| merge_stream_part(Some(existing_part), part))
-        {
+        if let Some(existing_position) = find_mergeable_part_index(existing_parts, position, part) {
+            merge_stream_part(existing_parts.get_mut(existing_position), part);
             continue;
         }
         existing_parts.push(part.clone());
+    }
+}
+
+fn find_mergeable_part_index(
+    existing_parts: &[Part],
+    position: usize,
+    next_part: &Part,
+) -> Option<usize> {
+    if existing_parts
+        .get(position)
+        .is_some_and(|existing_part| stream_parts_can_merge(existing_part, next_part))
+    {
+        return Some(position);
+    }
+
+    let candidates = existing_parts
+        .iter()
+        .enumerate()
+        .skip(position)
+        .filter_map(|(index, existing_part)| {
+            stream_parts_can_merge(existing_part, next_part).then_some(index)
+        })
+        .collect::<Vec<_>>();
+
+    if candidates.len() == 1 {
+        Some(candidates[0])
+    } else {
+        None
     }
 }
 
@@ -302,7 +328,7 @@ fn merge_stream_part(last_part: Option<&mut Part>, next_part: &Part) -> bool {
     let Some(last_part) = last_part else {
         return false;
     };
-    if !parts_share_merge_context(last_part, next_part) {
+    if !stream_parts_can_merge(last_part, next_part) {
         return false;
     }
 
@@ -322,6 +348,25 @@ fn merge_stream_part(last_part: Option<&mut Part>, next_part: &Part) -> bool {
             merge_function_call(existing_call, next_call);
             true
         }
+        _ => false,
+    }
+}
+
+fn stream_parts_can_merge(existing_part: &Part, next_part: &Part) -> bool {
+    if !parts_share_merge_context(existing_part, next_part) {
+        return false;
+    }
+
+    match (&existing_part.kind, &next_part.kind) {
+        (PartKind::Text { .. }, PartKind::Text { .. }) => true,
+        (
+            PartKind::FunctionCall {
+                function_call: existing_call,
+            },
+            PartKind::FunctionCall {
+                function_call: next_call,
+            },
+        ) => function_calls_share_target(existing_call, next_call),
         _ => false,
     }
 }

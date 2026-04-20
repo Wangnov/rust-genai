@@ -1700,6 +1700,90 @@ fn test_merge_content_parts_uses_part_positions_for_multi_part_chunks() {
     assert_eq!(call.partial_args.as_ref().unwrap().len(), 2);
 }
 
+#[test]
+fn test_merge_content_parts_merges_sparse_function_call_delta() {
+    let mut existing_parts = vec![
+        Part::text("prefix"),
+        Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("Bei".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        }),
+    ];
+
+    merge_content_parts(
+        &mut existing_parts,
+        &[Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: Some(json!({"city": "Beijing"})),
+            partial_args: None,
+            will_continue: Some(false),
+        })],
+    );
+
+    assert_eq!(existing_parts.len(), 2);
+    let call = existing_parts[1].function_call_ref().unwrap();
+    assert_eq!(call.id.as_deref(), Some("call-1"));
+    assert_eq!(call.name.as_deref(), Some("lookup"));
+    assert_eq!(call.args, Some(json!({"city": "Beijing"})));
+    assert!(call.partial_args.is_none());
+    assert_eq!(call.will_continue, Some(false));
+}
+
+#[test]
+fn test_find_mergeable_part_index_requires_unique_sparse_match() {
+    let existing_parts = vec![
+        Part::function_call(FunctionCall {
+            id: Some("call-0".into()),
+            name: Some("seed".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }),
+        Part::text("a"),
+        Part::text("b"),
+    ];
+    assert_eq!(
+        find_mergeable_part_index(&existing_parts, 0, &Part::text("c")),
+        None
+    );
+
+    let mixed_parts = vec![
+        Part::text("a"),
+        Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        }),
+    ];
+    assert_eq!(
+        find_mergeable_part_index(
+            &mixed_parts,
+            0,
+            &Part::function_call(FunctionCall {
+                id: Some("call-1".into()),
+                name: Some("lookup".into()),
+                args: None,
+                partial_args: None,
+                will_continue: None,
+            }),
+        ),
+        Some(1)
+    );
+}
+
 #[tokio::test]
 async fn test_generate_content_stream_thought_signature_error() {
     let client = Client::new("test-key").unwrap();
