@@ -122,7 +122,8 @@ impl GenerateContentEventStream {
                 None => {
                     self.finished = true;
                     if self.saw_done.load(Ordering::Relaxed) {
-                        if let Some(response) = self.aggregate_response.take() {
+                        if let Some(mut response) = self.aggregate_response.take() {
+                            normalize_stream_candidate_order(&mut response);
                             return Ok(Some(GenerateContentStreamEvent::Done(response)));
                         }
                     }
@@ -241,6 +242,39 @@ fn late_index_stream_position(
         .ok()
         .filter(|&candidate_position| candidate_position < aggregate_candidates.len())
         .filter(|&candidate_position| aggregate_candidates[candidate_position].index.is_none())
+}
+
+fn normalize_stream_candidate_order(response: &mut GenerateContentResponse) {
+    if response.candidates.len() < 2 {
+        return;
+    }
+
+    let mut ordered = vec![None; response.candidates.len()];
+    let mut unindexed = VecDeque::new();
+    let mut overflow = VecDeque::new();
+
+    for candidate in std::mem::take(&mut response.candidates) {
+        match candidate
+            .index
+            .and_then(|index| usize::try_from(index).ok())
+            .filter(|&index| index < ordered.len())
+        {
+            Some(index) if ordered[index].is_none() => ordered[index] = Some(candidate),
+            Some(_) => overflow.push_back(candidate),
+            None if candidate.index.is_none() => unindexed.push_back(candidate),
+            None => overflow.push_back(candidate),
+        }
+    }
+
+    for slot in &mut ordered {
+        if slot.is_none() {
+            *slot = unindexed.pop_front().or_else(|| overflow.pop_front());
+        }
+    }
+
+    response.candidates = ordered.into_iter().flatten().collect();
+    response.candidates.extend(unindexed);
+    response.candidates.extend(overflow);
 }
 
 fn merge_candidate(

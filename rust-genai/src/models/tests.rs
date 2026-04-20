@@ -1566,6 +1566,100 @@ fn test_merge_stream_response_merges_late_index_into_sparse_multi_candidate() {
 }
 
 #[test]
+fn test_normalize_stream_candidate_order_reorders_indexed_candidates() {
+    let mut response = GenerateContentResponse {
+        sdk_http_response: None,
+        candidates: vec![
+            Candidate {
+                content: Some(Content::from_parts(vec![Part::text("second")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(1),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+            Candidate {
+                content: Some(Content::from_parts(vec![Part::text("first")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(0),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+        ],
+        create_time: None,
+        automatic_function_calling_history: None,
+        prompt_feedback: None,
+        usage_metadata: None,
+        model_version: None,
+        response_id: None,
+    };
+
+    normalize_stream_candidate_order(&mut response);
+
+    assert_eq!(response.text().as_deref(), Some("first"));
+    assert_eq!(response.candidates[0].index, Some(0));
+    assert_eq!(response.candidates[1].index, Some(1));
+}
+
+#[test]
+fn test_normalize_stream_candidate_order_preserves_unindexed_gap_positions() {
+    let mut response = GenerateContentResponse {
+        sdk_http_response: None,
+        candidates: vec![
+            Candidate {
+                content: Some(Content::from_parts(vec![Part::text("second")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(1),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+            Candidate {
+                content: Some(Content::from_parts(vec![Part::text("first")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: None,
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            },
+        ],
+        create_time: None,
+        automatic_function_calling_history: None,
+        prompt_feedback: None,
+        usage_metadata: None,
+        model_version: None,
+        response_id: None,
+    };
+
+    normalize_stream_candidate_order(&mut response);
+
+    assert_eq!(response.text().as_deref(), Some("first"));
+    assert_eq!(response.candidates[0].index, None);
+    assert_eq!(response.candidates[1].index, Some(1));
+}
+
+#[test]
 fn test_stream_merge_helpers_respect_context_and_targets() {
     let resolution_low = PartMediaResolution {
         level: Some(PartMediaResolutionLevel::MediaResolutionLow),
