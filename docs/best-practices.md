@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-rust-genai = "0.3.0"
+rust-genai = "0.3.1"
 ```
 
 > 该版本号会在执行 `cargo release` 时自动同步更新。

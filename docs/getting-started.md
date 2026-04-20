@@ -8,7 +8,7 @@
 
 ```toml
 [dependencies]
-rust-genai = "0.3.0"
+rust-genai = "0.3.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
