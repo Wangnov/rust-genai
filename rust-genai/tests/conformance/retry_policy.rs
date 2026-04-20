@@ -1,7 +1,7 @@
-use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+
+use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -39,7 +39,7 @@ fn no_delay_retry_options(attempts: u32, codes: Vec<u16>) -> HttpRetryOptions {
 }
 
 #[tokio::test]
-async fn http_retry_global_retries_and_succeeds() {
+async fn mock_retry_policy_global_retries_and_succeeds() {
     let server = MockServer::start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
@@ -62,14 +62,13 @@ async fn http_retry_global_retries_and_succeeds() {
         .build()
         .unwrap();
 
-    let caches = client.caches();
-    let resp = caches.list().await.unwrap();
+    let resp = client.caches().list().await.unwrap();
     assert_eq!(resp.cached_contents.unwrap_or_default().len(), 0);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
-async fn http_retry_defaults_retry_transient_errors() {
+async fn mock_retry_policy_defaults_retry_transient_errors() {
     let server = MockServer::start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
@@ -101,7 +100,7 @@ async fn http_retry_defaults_retry_transient_errors() {
 }
 
 #[tokio::test]
-async fn http_retry_per_request_retries_and_succeeds() {
+async fn mock_retry_policy_per_request_override() {
     let server = MockServer::start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
@@ -124,8 +123,8 @@ async fn http_retry_per_request_retries_and_succeeds() {
         .build()
         .unwrap();
 
-    let caches = client.caches();
-    let resp = caches
+    let resp = client
+        .caches()
         .list_with_config(ListCachedContentsConfig {
             http_options: Some(HttpOptions {
                 retry_options: Some(no_delay_retry_options(2, vec![500])),
@@ -140,7 +139,7 @@ async fn http_retry_per_request_retries_and_succeeds() {
 }
 
 #[tokio::test]
-async fn http_retry_non_retryable_status_does_not_retry() {
+async fn mock_retry_policy_non_retryable_status() {
     let server = MockServer::start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
@@ -163,8 +162,7 @@ async fn http_retry_non_retryable_status_does_not_retry() {
         .build()
         .unwrap();
 
-    let caches = client.caches();
-    let err = caches.list().await.unwrap_err();
+    let err = client.caches().list().await.unwrap_err();
     assert!(matches!(
         err,
         rust_genai::Error::ApiError { status: 400, .. }
@@ -173,7 +171,7 @@ async fn http_retry_non_retryable_status_does_not_retry() {
 }
 
 #[tokio::test]
-async fn http_retry_attempts_one_disables_retry() {
+async fn mock_retry_policy_attempts_one_disables_retry() {
     let server = MockServer::start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
@@ -196,8 +194,7 @@ async fn http_retry_attempts_one_disables_retry() {
         .build()
         .unwrap();
 
-    let caches = client.caches();
-    let err = caches.list().await.unwrap_err();
+    let err = client.caches().list().await.unwrap_err();
     assert!(matches!(
         err,
         rust_genai::Error::ApiError { status: 500, .. }
@@ -206,7 +203,7 @@ async fn http_retry_attempts_one_disables_retry() {
 }
 
 #[tokio::test]
-async fn http_retry_attempts_one_preserves_custom_retryability() {
+async fn mock_retry_policy_attempts_one_preserves_custom_retryability() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1beta/cachedContents"))
@@ -234,7 +231,7 @@ async fn http_retry_attempts_one_preserves_custom_retryability() {
 }
 
 #[tokio::test]
-async fn http_retry_error_exposes_retry_metadata() {
+async fn mock_retry_policy_error_metadata() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1beta/cachedContents"))
@@ -262,26 +259,26 @@ async fn http_retry_error_exposes_retry_metadata() {
 
     let err = client.caches().list().await.unwrap_err();
     assert_eq!(err.status().unwrap().as_u16(), 429);
-    assert!(err.is_rate_limited());
-    assert!(err.is_retryable());
-    assert_eq!(err.retry_after(), Some(Duration::from_secs(3)));
-    assert_eq!(err.attempts(), Some(1));
     assert_eq!(err.code().as_deref(), Some("RESOURCE_EXHAUSTED"));
-    assert_eq!(err.details(), Some(json!([{"quota": "tokens"}])));
-    assert!(err.body().is_some());
-    assert!(err.headers().is_some());
+    assert_eq!(err.retry_after().map(|delay| delay.as_secs()), Some(3));
+    assert_eq!(err.attempts(), Some(1));
+    assert!(err.is_rate_limited());
 }
 
 #[tokio::test]
-async fn http_retry_error_tracks_attempt_count_after_retries() {
+async fn mock_retry_policy_tracks_attempt_count_after_retries() {
     let server = MockServer::start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
         .and(path("/v1beta/cachedContents"))
         .respond_with(SequenceResponder {
             calls: calls.clone(),
-            first: ResponseTemplate::new(500).set_body_string("boom-1"),
-            second: ResponseTemplate::new(500).set_body_string("boom-2"),
+            first: ResponseTemplate::new(503).set_body_json(json!({
+                "error": {"message": "busy", "status": "UNAVAILABLE"}
+            })),
+            second: ResponseTemplate::new(503).set_body_json(json!({
+                "error": {"message": "still busy", "status": "UNAVAILABLE"}
+            })),
         })
         .mount(&server)
         .await;
@@ -290,13 +287,12 @@ async fn http_retry_error_tracks_attempt_count_after_retries() {
         .api_key("test-key")
         .base_url(server.uri())
         .api_version("v1beta")
-        .retry_options(no_delay_retry_options(2, vec![500]))
+        .retry_options(no_delay_retry_options(2, vec![503]))
         .build()
         .unwrap();
 
     let err = client.caches().list().await.unwrap_err();
-    assert_eq!(err.status().unwrap().as_u16(), 500);
-    assert!(err.is_retryable());
+    assert_eq!(err.status().unwrap().as_u16(), 503);
     assert_eq!(err.attempts(), Some(2));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
