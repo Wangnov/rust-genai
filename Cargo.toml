@@ -36,3 +36,7 @@ syn = { version = "2.0", features = ["full"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 google-cloud-auth = "1.3"
 rmcp = "0.12"
+
+[workspace.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

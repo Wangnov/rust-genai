@@ -32,7 +32,7 @@ pub mod option {
     use super::*;
     use serde::de::Error as _;
 
-    /// 序列化 Option<Vec<u8>> 为 base64 字符串。
+    /// 序列化 `Option<Vec<u8>>` 为 base64 字符串。
     ///
     /// # Errors
     /// 当底层序列化器返回错误时。
@@ -46,7 +46,7 @@ pub mod option {
         }
     }
 
-    /// 反序列化 base64 字符串为 Option<Vec<u8>>。
+    /// 反序列化 base64 字符串为 `Option<Vec<u8>>`。
     ///
     /// # Errors
     /// 当反序列化失败或 base64 解码失败时。
