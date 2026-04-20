@@ -12,6 +12,9 @@
 
 **Language: 中文 | [English](#installation-1)**
 
+> 社区维护的 Rust SDK，用于 Google Gemini API 和 Vertex AI。
+> Google 维护官方 Go、JavaScript、Python SDK；本仓库提供社区维护的 Rust 实现。
+
 用于 Google Gemini API 和 Vertex AI 的 Rust SDK。本项目致力于与官方 Go、JavaScript、Python SDK 保持功能对齐，同时充分利用 Rust 的安全性和性能优势。
 
 ## 功能特性
@@ -19,7 +22,10 @@
 - 基于 Tokio 的异步优先客户端
 - 支持 Gemini API 和 Vertex AI 后端
 - Models、Chats、Files、Caches、Batches、Operations API
+- 默认自动重试 `408`、`429`、`500`、`502`、`503`、`504`
 - 流式响应（SSE）
+- 结构化 JSON 生成辅助（`generate_json`）
+- 事件级流式辅助（`generate_content_event_stream`）
 - 函数调用和工具系统
 - 自动函数调用（AFC）与可调用工具
 - Live API、会话恢复、Live Music（实验性）
@@ -56,7 +62,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-3-flash-preview", vec![Content::text("你好，Rust!")])
+        .generate_content("gemini-2.5-flash-lite", vec![Content::text("你好，Rust!")])
         .await?;
     println!("{response:?}");
     Ok(())
@@ -66,7 +72,13 @@ async fn main() -> rust_genai::Result<()> {
 ## 文档
 
 - 快速开始：`docs/getting-started.md`
+- 认证指南：`docs/auth.md`
+- 兼容矩阵：`docs/compatibility-matrix.md`
 - API 版本：`docs/api-versions.md`
+- 错误处理：`docs/error-handling.md`
+- Retry / Timeout：`docs/retry-timeout.md`
+- 版本与稳定性：`docs/versioning.md`
+- LLM 代码生成说明：`llms.txt`
 - 官方来源清单：`docs/official-sources.md`
 - 规范同步：`docs/spec-sync.md`
 - 最佳实践：`docs/best-practices.md`
@@ -77,6 +89,18 @@ async fn main() -> rust_genai::Result<()> {
 ## 示例
 
 查看 `rust-genai/examples/` 目录，涵盖核心功能、错误处理、性能与 Live Music。
+
+## 稳定性分层
+
+| Surface | Status | Scope |
+|---------|--------|-------|
+| Client、Models、Chats、Files、Caches、Batches、Operations、Tokens、Embeddings、SSE Streaming | Stable | 主线能力，遵循语义化版本演进 |
+| Interactions API | Beta | 接口跟随官方快速演进 |
+| Deep Research | Preview | 适合前沿工作流验证 |
+| Live Music | Experimental | 适合单独评估后接入 |
+| MCP (`feature = "mcp"`) | Experimental | 通过 feature gate 暴露，适合扩展集成 |
+
+详细说明见 `docs/versioning.md`。
 
 ## 工作区结构
 
@@ -94,6 +118,9 @@ Apache-2.0。详见 `LICENSE`。
 
 **Language: [中文](#rust-gemini-sdk-rust-genai) | English**
 
+> Community-maintained Rust SDK for the Google Gemini API and Vertex AI.
+> Google maintains the official Go, JavaScript, and Python SDKs; this repository provides the community-maintained Rust implementation.
+
 Rust SDK for the Google Gemini API and Vertex AI. This workspace aims to stay feature-aligned with the official Go, JavaScript, and Python SDKs while taking advantage of Rust's safety and performance.
 
 ## Features
@@ -101,7 +128,10 @@ Rust SDK for the Google Gemini API and Vertex AI. This workspace aims to stay fe
 - Async-first client with Tokio
 - Gemini API and Vertex AI backends
 - Models, Chats, Files, Caches, Batches, Operations
+- Default automatic retries for `408`, `429`, `500`, `502`, `503`, and `504`
 - Streaming (SSE)
+- Structured JSON generation helper (`generate_json`)
+- Event-level streaming helper (`generate_content_event_stream`)
 - Function calling and tool system
 - Automatic function calling (AFC) with callable tools
 - Live API, session resumption, and Live Music (experimental)
@@ -138,7 +168,7 @@ async fn main() -> rust_genai::Result<()> {
     let client = Client::from_env()?;
     let response = client
         .models()
-        .generate_content("gemini-3-flash-preview", vec![Content::text("Hello from Rust!")])
+        .generate_content("gemini-2.5-flash-lite", vec![Content::text("Hello from Rust!")])
         .await?;
     println!("{response:?}");
     Ok(())
@@ -148,7 +178,13 @@ async fn main() -> rust_genai::Result<()> {
 ## Documentation
 
 - Getting Started: `docs/getting-started.md`
+- Auth Guide: `docs/auth.md`
+- Compatibility Matrix: `docs/compatibility-matrix.md`
 - API Versions: `docs/api-versions.md`
+- Error Handling: `docs/error-handling.md`
+- Retry / Timeout: `docs/retry-timeout.md`
+- Versioning and Stability: `docs/versioning.md`
+- LLM Codegen Notes: `llms.txt`
 - Official Sources: `docs/official-sources.md`
 - Spec Sync: `docs/spec-sync.md`
 - Best Practices: `docs/best-practices.md`
@@ -159,6 +195,18 @@ async fn main() -> rust_genai::Result<()> {
 ## Examples
 
 See `rust-genai/examples/` for core features, error handling, performance, and Live Music.
+
+## Stability Tiers
+
+| Surface | Status | Scope |
+|---------|--------|-------|
+| Client, Models, Chats, Files, Caches, Batches, Operations, Tokens, Embeddings, SSE streaming | Stable | Core paths follow semantic-versioned evolution |
+| Interactions API | Beta | Surface tracks official API changes quickly |
+| Deep Research | Preview | Suitable for early workflow validation |
+| Live Music | Experimental | Evaluate separately before wider adoption |
+| MCP (`feature = "mcp"`) | Experimental | Feature-gated integration surface |
+
+See `docs/versioning.md` for the release contract.
 
 ## Workspace Layout
 

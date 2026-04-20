@@ -58,10 +58,7 @@ impl FileSearchStores {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<FileSearchStore>().await?)
     }
@@ -96,10 +93,7 @@ impl FileSearchStores {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<FileSearchStore>().await?)
     }
@@ -135,10 +129,7 @@ impl FileSearchStores {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(())
     }
@@ -172,10 +163,7 @@ impl FileSearchStores {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let mut result = response.json::<ListFileSearchStoresResponse>().await?;
@@ -381,10 +369,7 @@ impl FileSearchStores {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<ImportFileOperation>().await?)
     }
@@ -426,10 +411,7 @@ impl FileSearchStores {
             .send_with_http_options(request, http_options)
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -513,10 +495,7 @@ impl FileSearchStores {
             .send_with_http_options(request, http_options)
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let status = response
             .headers()

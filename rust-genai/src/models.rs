@@ -1,8 +1,9 @@
 //! Models API surface.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::BuildHasher;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use futures_util::{Stream, StreamExt};
@@ -18,7 +19,8 @@ use rust_genai_types::models::{
     ReferenceImage, SegmentImageConfig, SegmentImageResponse, SegmentImageSource,
     UpdateModelConfig,
 };
-use rust_genai_types::response::GenerateContentResponse;
+use rust_genai_types::response::{GenerateContentResponse, GenerateContentResponseUsageMetadata};
+use serde::de::DeserializeOwned;
 
 use crate::afc::{
     call_callable_tools, max_remote_calls, resolve_callable_tools, should_append_history,
@@ -32,7 +34,7 @@ use crate::http_response::{
 use crate::model_capabilities::{
     validate_code_execution_image_inputs, validate_function_response_media,
 };
-use crate::sse::parse_sse_stream;
+use crate::sse::{parse_sse_stream, parse_sse_stream_with_done_signal};
 use crate::thinking::{validate_temperature, ThoughtSignatureValidator};
 use crate::tokenizer::TokenEstimator;
 use serde_json::Value;
@@ -60,6 +62,95 @@ use parsers::{
 #[derive(Clone)]
 pub struct Models {
     pub(crate) inner: Arc<ClientInner>,
+}
+
+#[derive(Debug, Clone)]
+pub enum GenerateContentStreamEvent {
+    Text(String),
+    FunctionCall(FunctionCall),
+    Usage(GenerateContentResponseUsageMetadata),
+    Response(GenerateContentResponse),
+    Done(GenerateContentResponse),
+}
+
+pub struct GenerateContentEventStream {
+    inner: Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>,
+    pending: VecDeque<GenerateContentStreamEvent>,
+    last_response: Option<GenerateContentResponse>,
+    saw_done: Arc<AtomicBool>,
+    finished: bool,
+}
+
+impl GenerateContentEventStream {
+    fn new(
+        inner: Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>,
+        saw_done: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner,
+            pending: VecDeque::new(),
+            last_response: None,
+            saw_done,
+            finished: false,
+        }
+    }
+
+    pub async fn next_event(&mut self) -> Result<Option<GenerateContentStreamEvent>> {
+        loop {
+            if let Some(event) = self.pending.pop_front() {
+                return Ok(Some(event));
+            }
+
+            if self.finished {
+                return Ok(None);
+            }
+
+            match self.inner.next().await {
+                Some(Ok(response)) => {
+                    self.last_response = Some(response.clone());
+                    enqueue_stream_events(&mut self.pending, response);
+                }
+                Some(Err(err)) => {
+                    self.finished = true;
+                    return Err(err);
+                }
+                None => {
+                    self.finished = true;
+                    if self.saw_done.load(Ordering::Relaxed) {
+                        if let Some(response) = self.last_response.take() {
+                            return Ok(Some(GenerateContentStreamEvent::Done(response)));
+                        }
+                    }
+                    self.last_response.take();
+                    return Ok(None);
+                }
+            }
+        }
+    }
+}
+
+fn enqueue_stream_events(
+    pending: &mut VecDeque<GenerateContentStreamEvent>,
+    response: GenerateContentResponse,
+) {
+    for candidate in &response.candidates {
+        if let Some(content) = &candidate.content {
+            for part in &content.parts {
+                if let Some(text) = part.text_value() {
+                    pending.push_back(GenerateContentStreamEvent::Text(text.to_string()));
+                }
+                if let Some(call) = part.function_call_ref() {
+                    pending.push_back(GenerateContentStreamEvent::FunctionCall(call.clone()));
+                }
+            }
+        }
+    }
+
+    if let Some(usage) = response.usage_metadata.clone() {
+        pending.push_back(GenerateContentStreamEvent::Usage(usage));
+    }
+
+    pending.push_back(GenerateContentStreamEvent::Response(response));
 }
 
 struct CallableStreamContext<S> {
@@ -241,6 +332,58 @@ impl Models {
             .await
     }
 
+    /// 生成并解析 JSON 响应。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容或 JSON 解析失败时返回错误。
+    pub async fn generate_json<T: DeserializeOwned>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+    ) -> Result<T> {
+        self.generate_json_with_config(model, contents, GenerateContentConfig::default())
+            .await
+    }
+
+    /// 生成并解析 JSON 响应（自定义配置）。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容或 JSON 解析失败时返回错误。
+    pub async fn generate_json_with_config<T: DeserializeOwned>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+        mut config: GenerateContentConfig,
+    ) -> Result<T> {
+        let generation_config = config
+            .generation_config
+            .get_or_insert_with(Default::default);
+        match generation_config.response_mime_type.as_deref() {
+            Some("application/json") => {}
+            Some(other) => {
+                return Err(Error::InvalidConfig {
+                    message: format!(
+                        "generate_json_with_config requires response_mime_type = application/json, got {other}"
+                    ),
+                });
+            }
+            None => {
+                generation_config.response_mime_type = Some("application/json".into());
+            }
+        }
+
+        let response = self
+            .generate_content_with_config(model, contents, config)
+            .await?;
+        let text = first_candidate_text(&response).ok_or_else(|| Error::Parse {
+            message: "Expected text response containing JSON".into(),
+        })?;
+
+        Ok(serde_json::from_str(&text)?)
+    }
+
     /// 生成内容（自定义配置）。
     ///
     /// # Errors
@@ -292,10 +435,7 @@ impl Models {
         let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         if should_return_http_response {
@@ -537,13 +677,15 @@ impl Models {
         let mut url = build_model_method_url(&self.inner, &model, "streamGenerateContent")?;
         url.push_str("?alt=sse");
 
-        let request = self.inner.http.post(url).json(&request);
+        let body = match backend {
+            Backend::GeminiApi => converters::generate_content_request_to_mldev(&request)?,
+            Backend::VertexAi => converters::generate_content_request_to_vertex(&request)?,
+        };
+
+        let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -555,6 +697,85 @@ impl Models {
             })
         });
         Ok(Box::pin(stream))
+    }
+
+    /// 生成内容事件流。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、配置校验失败或响应解析失败时返回错误。
+    pub async fn generate_content_event_stream(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+        config: GenerateContentConfig,
+    ) -> Result<GenerateContentEventStream> {
+        let should_return_http_response = config.should_return_http_response.unwrap_or(false);
+        if should_return_http_response {
+            return Err(Error::InvalidConfig {
+                message: "should_return_http_response is not supported in streaming".into(),
+            });
+        }
+
+        let model = model.into();
+        validate_temperature(&model, &config)?;
+        ThoughtSignatureValidator::new(&model).validate(&contents)?;
+        validate_function_response_media(&model, &contents)?;
+        validate_code_execution_image_inputs(&model, &contents, config.tools.as_deref())?;
+
+        let backend = self.inner.config.backend;
+        if backend == Backend::GeminiApi && config.model_armor_config.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config is not supported in Gemini API".into(),
+            });
+        }
+        if config.model_armor_config.is_some() && config.safety_settings.is_some() {
+            return Err(Error::InvalidConfig {
+                message: "model_armor_config cannot be combined with safety_settings".into(),
+            });
+        }
+
+        let request = GenerateContentRequest {
+            contents,
+            system_instruction: config.system_instruction,
+            generation_config: config.generation_config,
+            safety_settings: config.safety_settings,
+            model_armor_config: config.model_armor_config,
+            tools: config.tools,
+            tool_config: config.tool_config,
+            cached_content: config.cached_content,
+            labels: config.labels,
+        };
+
+        let url = build_model_method_url(&self.inner, &model, "streamGenerateContent")?;
+        let body = match backend {
+            Backend::GeminiApi => converters::generate_content_request_to_mldev(&request)?,
+            Backend::VertexAi => converters::generate_content_request_to_vertex(&request)?,
+        };
+
+        let request = self
+            .inner
+            .http
+            .post(format!("{url}?alt=sse"))
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(&body);
+        let response = self.inner.send(request).await?;
+        if !response.status().is_success() {
+            return Err(Error::api_error_from_response(response, None).await);
+        }
+
+        let headers = response.headers().clone();
+        let sdk_http_response = sdk_http_response_from_headers(&headers);
+        let saw_done = Arc::new(AtomicBool::new(false));
+        let stream =
+            parse_sse_stream_with_done_signal(response, saw_done.clone()).map(move |item| {
+                item.map(|mut resp: GenerateContentResponse| {
+                    resp.sdk_http_response = Some(sdk_http_response.clone());
+                    resp
+                })
+            });
+
+        Ok(GenerateContentEventStream::new(Box::pin(stream), saw_done))
     }
 
     /// 生成嵌入向量（默认配置）。
@@ -598,10 +819,7 @@ impl Models {
         let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -661,10 +879,7 @@ impl Models {
         let request = self.inner.http.post(url).json(&body);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
@@ -722,10 +937,7 @@ impl Models {
             .send_with_http_options(request, config.http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let value = response.json::<Value>().await?;
@@ -811,10 +1023,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -859,10 +1068,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -907,10 +1113,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -953,10 +1156,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let value = response.json::<Value>().await?;
@@ -996,10 +1196,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let value = response.json::<Value>().await?;
@@ -1033,10 +1230,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let value = response.json::<Value>().await?;
@@ -1080,10 +1274,7 @@ impl Models {
         let request = self.inner.http.get(url);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let mut result = response.json::<ListModelsResponse>().await?;
@@ -1132,10 +1323,7 @@ impl Models {
         let request = self.inner.http.get(url);
         let response = self.inner.send(request).await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let result = response.json::<Model>().await?;
         Ok(result)
@@ -1167,10 +1355,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<Model>().await?)
     }
@@ -1197,10 +1382,7 @@ impl Models {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         if response.content_length().unwrap_or(0) == 0 {
@@ -1216,6 +1398,17 @@ impl Models {
         resp.sdk_http_response = Some(sdk_http_response_from_headers(&headers));
         Ok(resp)
     }
+}
+
+fn first_candidate_text(response: &GenerateContentResponse) -> Option<String> {
+    let mut text = String::new();
+    let content = response.candidates.first()?.content.as_ref()?;
+    for part in &content.parts {
+        if let Some(part_text) = part.text_value() {
+            text.push_str(part_text);
+        }
+    }
+    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(test)]

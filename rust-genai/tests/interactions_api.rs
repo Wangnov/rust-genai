@@ -169,3 +169,73 @@ async fn interactions_create_supports_webhook_config() {
         .unwrap();
     assert_eq!(created.id.as_deref(), Some("int_1"));
 }
+
+#[tokio::test]
+async fn interactions_surface_api_errors_across_endpoints() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/interactions/int_get"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "error": {
+                "message": "missing interaction",
+                "status": "NOT_FOUND"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/interactions/int_stream"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+            "error": {
+                "message": "slow down",
+                "status": "RESOURCE_EXHAUSTED"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/v1beta/interactions/int_delete"))
+        .respond_with(ResponseTemplate::new(410).set_body_json(json!({
+            "error": {
+                "message": "gone",
+                "status": "FAILED_PRECONDITION"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/interactions/int_cancel/cancel"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({
+            "error": {
+                "message": "cancel unavailable",
+                "status": "UNAVAILABLE"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = build_gemini_client_with_version(&server.uri(), "v1beta");
+    let interactions = client.interactions();
+
+    let err = interactions.get("int_get").await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 404);
+    assert_eq!(err.code().as_deref(), Some("NOT_FOUND"));
+
+    let err = match interactions.get_stream("int_stream").await {
+        Ok(_) => panic!("expected interactions.get_stream to fail"),
+        Err(err) => err,
+    };
+    assert_eq!(err.status().unwrap().as_u16(), 429);
+    assert!(err.is_rate_limited());
+
+    let err = interactions.delete("int_delete").await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 410);
+
+    let err = interactions.cancel("int_cancel").await.unwrap_err();
+    assert_eq!(err.status().unwrap().as_u16(), 503);
+    assert!(err.is_retryable());
+}

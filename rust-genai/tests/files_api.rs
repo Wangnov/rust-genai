@@ -110,10 +110,8 @@ async fn files_api_flow() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(
-        err,
-        rust_genai::Error::ApiError { .. } | rust_genai::Error::Timeout { .. }
-    ));
+    assert!(matches!(err, rust_genai::Error::ApiError { .. }));
+    assert!(!err.is_retryable());
 }
 
 #[tokio::test]

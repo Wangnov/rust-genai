@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
@@ -117,23 +117,44 @@ impl Client {
     /// # Errors
     /// 当环境变量缺失或构建客户端失败时返回错误。
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("GEMINI_API_KEY")
-            .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-            .map_err(|_| Error::InvalidConfig {
+        let vertex_override = env_flag("GOOGLE_GENAI_USE_VERTEXAI");
+        let vertex_project = first_nonempty_env(&["GOOGLE_CLOUD_PROJECT"]);
+        let vertex_location = first_nonempty_env(&["GOOGLE_CLOUD_LOCATION"]);
+        let api_key = first_nonempty_env(&["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
+        let has_complete_vertex_env = vertex_project.is_some() && vertex_location.is_some();
+        let use_vertex = match vertex_override {
+            Some(flag) => flag,
+            None => has_complete_vertex_env && api_key.is_none(),
+        };
+
+        let mut builder = if use_vertex {
+            let mut builder = Self::builder().backend(Backend::VertexAi);
+            if let Some(project) = vertex_project {
+                builder = builder.vertex_project(project);
+            }
+            if let Some(location) = vertex_location {
+                builder = builder.vertex_location(location);
+            }
+            builder
+        } else {
+            let api_key = api_key.ok_or_else(|| Error::InvalidConfig {
                 message: "GEMINI_API_KEY or GOOGLE_API_KEY not found".into(),
             })?;
-        let mut builder = Self::builder().api_key(api_key);
-        if let Ok(base_url) =
-            std::env::var("GENAI_BASE_URL").or_else(|_| std::env::var("GEMINI_BASE_URL"))
-        {
-            if !base_url.trim().is_empty() {
-                builder = builder.base_url(base_url);
-            }
+            Self::builder().api_key(api_key).backend(Backend::GeminiApi)
+        };
+
+        let base_url_envs: &[&str] = if use_vertex {
+            &["GOOGLE_GENAI_BASE_URL", "GENAI_BASE_URL"]
+        } else {
+            &["GOOGLE_GENAI_BASE_URL", "GENAI_BASE_URL", "GEMINI_BASE_URL"]
+        };
+        if let Some(base_url) = first_nonempty_env(base_url_envs) {
+            builder = builder.base_url(base_url);
         }
-        if let Ok(api_version) = std::env::var("GENAI_API_VERSION") {
-            if !api_version.trim().is_empty() {
-                builder = builder.api_version(api_version);
-            }
+        if let Some(api_version) =
+            first_nonempty_env(&["GOOGLE_GENAI_API_VERSION", "GENAI_API_VERSION"])
+        {
+            builder = builder.api_version(api_version);
         }
         builder.build()
     }
@@ -646,6 +667,21 @@ const DEFAULT_RETRY_MAX_DELAY_SECS: f64 = 60.0;
 const DEFAULT_RETRY_EXP_BASE: f64 = 2.0;
 const DEFAULT_RETRY_JITTER: f64 = 1.0;
 const DEFAULT_RETRY_HTTP_STATUS_CODES: [u16; 6] = [408, 429, 500, 502, 503, 504];
+static DEFAULT_HTTP_RETRY_OPTIONS: LazyLock<HttpRetryOptions> =
+    LazyLock::new(|| HttpRetryOptions {
+        attempts: Some(DEFAULT_RETRY_ATTEMPTS),
+        initial_delay: Some(DEFAULT_RETRY_INITIAL_DELAY_SECS),
+        max_delay: Some(DEFAULT_RETRY_MAX_DELAY_SECS),
+        exp_base: Some(DEFAULT_RETRY_EXP_BASE),
+        jitter: Some(DEFAULT_RETRY_JITTER),
+        http_status_codes: Some(DEFAULT_RETRY_HTTP_STATUS_CODES.to_vec()),
+    });
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RetryMetadata {
+    pub attempts: u32,
+    pub retryable: bool,
+}
 
 impl ClientInner {
     /// 发送请求并自动注入鉴权头。
@@ -667,14 +703,12 @@ impl ClientInner {
     ) -> Result<reqwest::Response> {
         let retry_options = request_http_options
             .and_then(|options| options.retry_options.as_ref())
-            .or(self.config.http_options.retry_options.as_ref());
+            .or(self.config.http_options.retry_options.as_ref())
+            .unwrap_or(&DEFAULT_HTTP_RETRY_OPTIONS);
 
         let request_template = request.build()?;
-        if let Some(options) = retry_options {
-            self.execute_with_retry(request_template, options).await
-        } else {
-            self.execute_once(request_template).await
-        }
+        self.execute_with_retry(request_template, retry_options)
+            .await
     }
 
     async fn execute_once(&self, mut request: reqwest::Request) -> Result<reqwest::Response> {
@@ -688,19 +722,26 @@ impl ClientInner {
         retry_options: &HttpRetryOptions,
     ) -> Result<reqwest::Response> {
         let attempts = retry_options.attempts.unwrap_or(DEFAULT_RETRY_ATTEMPTS);
-        if attempts <= 1 {
-            return self.execute_once(request_template).await;
-        }
-
-        // If the request body can't be cloned, we can't safely retry.
-        if request_template.try_clone().is_none() {
-            return self.execute_once(request_template).await;
-        }
-
         let retryable_codes: &[u16] = retry_options
             .http_status_codes
             .as_deref()
             .unwrap_or(&DEFAULT_RETRY_HTTP_STATUS_CODES);
+        if attempts <= 1 {
+            let mut response = self.execute_once(request_template).await?;
+            if !response.status().is_success() {
+                attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
+            }
+            return Ok(response);
+        }
+
+        // If the request body can't be cloned, we can't safely retry.
+        if request_template.try_clone().is_none() {
+            let mut response = self.execute_once(request_template).await?;
+            if !response.status().is_success() {
+                attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
+            }
+            return Ok(response);
+        }
 
         for attempt in 0..attempts {
             let request = request_template
@@ -716,13 +757,18 @@ impl ClientInner {
             let should_retry = retryable_codes.contains(&status);
             let is_last_attempt = attempt + 1 >= attempts;
             if !should_retry || is_last_attempt {
+                let mut response = response;
+                attach_retry_metadata(&mut response, attempt + 1, should_retry);
                 return Ok(response);
             }
 
+            let delay = bounded_retry_delay_secs(
+                retry_options,
+                attempt,
+                retry_after_delay_secs(response.headers()),
+            );
             // Drop the response before retrying to release the connection back to the pool.
             drop(response);
-
-            let delay = retry_delay_secs(retry_options, attempt);
             if delay > 0.0 {
                 tokio::time::sleep(Duration::from_secs_f64(delay)).await;
             }
@@ -796,6 +842,73 @@ fn append_sdk_usage_header(headers: &mut HeaderMap) -> Result<()> {
     })?;
     headers.insert(header_name, value);
     Ok(())
+}
+
+fn first_nonempty_env(names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn env_flag(name: &str) -> Option<bool> {
+    let value = std::env::var(name).ok()?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn attach_retry_metadata(response: &mut reqwest::Response, attempts: u32, retryable: bool) {
+    response.extensions_mut().insert(RetryMetadata {
+        attempts,
+        retryable,
+    });
+}
+
+fn attach_retry_metadata_for_codes(
+    response: &mut reqwest::Response,
+    attempts: u32,
+    retryable_codes: &[u16],
+) {
+    let retryable = retryable_codes.contains(&response.status().as_u16());
+    attach_retry_metadata(response, attempts, retryable);
+}
+
+fn retry_after_delay_secs(headers: &HeaderMap) -> Option<f64> {
+    let retry_after = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)?;
+
+    retry_after
+        .parse::<f64>()
+        .ok()
+        .map(|delay| delay.max(0.0))
+        .or_else(|| {
+            httpdate::parse_http_date(retry_after).ok().map(|deadline| {
+                deadline
+                    .duration_since(SystemTime::now())
+                    .unwrap_or_default()
+                    .as_secs_f64()
+            })
+        })
+}
+
+fn bounded_retry_delay_secs(
+    options: &HttpRetryOptions,
+    retry_index: u32,
+    retry_after_secs: Option<f64>,
+) -> f64 {
+    let delay = retry_after_secs.unwrap_or_else(|| retry_delay_secs(options, retry_index));
+    let max_delay = options
+        .max_delay
+        .unwrap_or(DEFAULT_RETRY_MAX_DELAY_SECS)
+        .max(0.0);
+    delay.min(max_delay)
 }
 
 fn retry_delay_secs(options: &HttpRetryOptions, retry_index: u32) -> f64 {
@@ -906,8 +1019,13 @@ fn normalize_base_url(base_url: &str) -> String {
 mod tests {
     use super::*;
     use crate::test_support::with_env;
+    use bytes::Bytes;
+    use futures_util::stream;
     use std::path::PathBuf;
+    use std::time::SystemTime;
     use tempfile::tempdir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_client_from_api_key() {
@@ -952,6 +1070,7 @@ mod tests {
                 ("GEMINI_API_KEY", Some("env-key")),
                 ("GENAI_BASE_URL", Some("https://env.example.com")),
                 ("GENAI_API_VERSION", Some("v99")),
+                ("GOOGLE_GENAI_API_VERSION", None),
                 ("GOOGLE_API_KEY", None),
             ],
             || {
@@ -963,12 +1082,37 @@ mod tests {
     }
 
     #[test]
+    fn test_from_env_ignores_gemini_base_url_for_vertex() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", None),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", Some("true")),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+                ("GEMINI_BASE_URL", Some("https://gemini-only.example.com")),
+                ("GENAI_BASE_URL", None),
+                ("GOOGLE_GENAI_BASE_URL", None),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::VertexAi);
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://us-central1-aiplatform.googleapis.com/"
+                );
+            },
+        );
+    }
+
+    #[test]
     fn test_from_env_ignores_empty_overrides() {
         with_env(
             &[
                 ("GEMINI_API_KEY", Some("env-key")),
                 ("GENAI_BASE_URL", Some("   ")),
                 ("GENAI_API_VERSION", Some("")),
+                ("GOOGLE_GENAI_API_VERSION", None),
                 ("GOOGLE_API_KEY", None),
             ],
             || {
@@ -989,6 +1133,9 @@ mod tests {
                 ("GEMINI_API_KEY", None),
                 ("GOOGLE_API_KEY", None),
                 ("GENAI_BASE_URL", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", None),
+                ("GOOGLE_CLOUD_PROJECT", None),
+                ("GOOGLE_CLOUD_LOCATION", None),
             ],
             || {
                 let result = Client::from_env();
@@ -1003,12 +1150,252 @@ mod tests {
             &[
                 ("GEMINI_API_KEY", None),
                 ("GOOGLE_API_KEY", Some("google-key")),
+                ("GOOGLE_GENAI_USE_VERTEXAI", None),
             ],
             || {
                 let client = Client::from_env().unwrap();
                 assert_eq!(client.inner.config.api_key.as_deref(), Some("google-key"));
             },
         );
+    }
+
+    #[test]
+    fn test_from_env_supports_official_vertex_envs() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", Some("env-key")),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", Some("true")),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+                ("GOOGLE_GENAI_API_VERSION", Some("v1")),
+                ("GENAI_API_VERSION", Some("v1beta")),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::VertexAi);
+                assert!(matches!(
+                    client.inner.config.credentials,
+                    Credentials::ApplicationDefault
+                ));
+                assert_eq!(client.inner.config.api_key, None);
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://us-central1-aiplatform.googleapis.com/"
+                );
+                assert_eq!(client.inner.api_client.api_version, "v1");
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_uses_complete_vertex_env_without_flag_when_api_key_is_absent() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", None),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", None),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::VertexAi);
+                assert_eq!(client.inner.config.api_key, None);
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://us-central1-aiplatform.googleapis.com/"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_prefers_gemini_when_api_key_and_complete_vertex_env_exist() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", Some("env-key")),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", None),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::GeminiApi);
+                assert_eq!(client.inner.config.api_key.as_deref(), Some("env-key"));
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://generativelanguage.googleapis.com/"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_explicit_false_prefers_gemini_even_with_complete_vertex_env() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", Some("env-key")),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", Some("false")),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", Some("us-central1")),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::GeminiApi);
+                assert_eq!(client.inner.config.api_key.as_deref(), Some("env-key"));
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://generativelanguage.googleapis.com/"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_prefers_gemini_when_vertex_env_is_partial() {
+        with_env(
+            &[
+                ("GEMINI_API_KEY", Some("env-key")),
+                ("GOOGLE_API_KEY", None),
+                ("GOOGLE_GENAI_USE_VERTEXAI", None),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", None),
+            ],
+            || {
+                let client = Client::from_env().unwrap();
+                assert_eq!(client.inner.config.backend, Backend::GeminiApi);
+                assert_eq!(client.inner.config.api_key.as_deref(), Some("env-key"));
+                assert_eq!(
+                    client.inner.api_client.base_url,
+                    "https://generativelanguage.googleapis.com/"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_from_env_vertex_requires_project_and_location() {
+        with_env(
+            &[
+                ("GOOGLE_GENAI_USE_VERTEXAI", Some("true")),
+                ("GOOGLE_CLOUD_PROJECT", Some("vertex-project")),
+                ("GOOGLE_CLOUD_LOCATION", None),
+                ("GEMINI_API_KEY", None),
+                ("GOOGLE_API_KEY", None),
+            ],
+            || {
+                let result = Client::from_env();
+                assert!(matches!(result, Err(Error::InvalidConfig { .. })));
+            },
+        );
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_prefers_retry_after_with_cap() {
+        let options = HttpRetryOptions {
+            max_delay: Some(2.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 0, Some(120.0));
+        assert_eq!(delay, 2.0);
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_uses_retry_after_when_below_cap() {
+        let options = HttpRetryOptions {
+            max_delay: Some(5.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 0, Some(1.5));
+        assert_eq!(delay, 1.5);
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_caps_retry_after_at_zero() {
+        let options = HttpRetryOptions {
+            max_delay: Some(0.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 0, Some(120.0));
+        assert_eq!(delay, 0.0);
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_falls_back_to_backoff() {
+        let options = HttpRetryOptions {
+            initial_delay: Some(1.0),
+            max_delay: Some(10.0),
+            exp_base: Some(2.0),
+            jitter: Some(0.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 2, None);
+        assert_eq!(delay, 4.0);
+    }
+
+    #[test]
+    fn test_retry_after_delay_secs_parses_http_date() {
+        let deadline = SystemTime::now() + Duration::from_secs(120);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_str(&httpdate::fmt_http_date(deadline)).unwrap(),
+        );
+
+        let delay = retry_after_delay_secs(&headers).unwrap();
+        assert!((110.0..=120.0).contains(&delay));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_http_options_preserves_custom_retry_metadata_without_retries() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/retry-once"))
+            .respond_with(ResponseTemplate::new(409).set_body_string("conflict"))
+            .mount(&server)
+            .await;
+
+        let client = Client::new("test-key").unwrap();
+        let request = client
+            .inner
+            .http
+            .post(format!("{}/retry-once", server.uri()))
+            .body(reqwest::Body::wrap_stream(stream::once(async {
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b"payload"))
+            })));
+        let http_options = rust_genai_types::http::HttpOptions {
+            retry_options: Some(HttpRetryOptions {
+                attempts: Some(2),
+                http_status_codes: Some(vec![409]),
+                initial_delay: Some(0.0),
+                max_delay: Some(0.0),
+                exp_base: Some(0.0),
+                jitter: Some(0.0),
+            }),
+            ..Default::default()
+        };
+
+        let response = client
+            .inner
+            .send_with_http_options(request, Some(&http_options))
+            .await
+            .unwrap();
+        let retry_metadata = response
+            .extensions()
+            .get::<RetryMetadata>()
+            .copied()
+            .unwrap();
+
+        assert_eq!(response.status().as_u16(), 409);
+        assert_eq!(retry_metadata.attempts, 1);
+        assert!(retry_metadata.retryable);
     }
 
     #[test]

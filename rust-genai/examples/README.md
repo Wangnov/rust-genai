@@ -33,6 +33,8 @@ GENAI_SMOKE_INCLUDE_EDGE_PROBES=1 cargo run -p rust-genai --example live_smoke
 
 - generate_content_basic
 - generate_content_stream
+- generate_content_events
+- generate_json
 - list_models
 - live_smoke
 - embed_content

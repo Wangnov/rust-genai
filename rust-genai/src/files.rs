@@ -226,10 +226,7 @@ impl Files {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let bytes = response.bytes().await?;
         Ok(bytes.to_vec())
@@ -258,10 +255,7 @@ impl Files {
             .send_with_http_options(request, http_options)
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let mut result = response.json::<ListFilesResponse>().await?;
@@ -328,10 +322,7 @@ impl Files {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<File>().await?)
     }
@@ -366,10 +357,7 @@ impl Files {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         let headers = response.headers().clone();
         let text = response.text().await.unwrap_or_default();
@@ -426,10 +414,7 @@ impl Files {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -468,10 +453,11 @@ impl Files {
             match file.state {
                 Some(FileState::Active) => return Ok(file),
                 Some(FileState::Failed) => {
-                    return Err(Error::ApiError {
-                        status: 500,
-                        message: "File processing failed".into(),
-                    })
+                    return Err(Error::api_error_with_retryable(
+                        500,
+                        "File processing failed",
+                        false,
+                    ));
                 }
                 _ => {}
             }
@@ -524,10 +510,7 @@ impl Files {
             .send_with_http_options(request, http_options)
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let headers = response.headers().clone();
@@ -625,10 +608,7 @@ impl Files {
             .await?;
 
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
 
         let upload_status = response
@@ -929,6 +909,9 @@ mod tests {
         assert!(matches!(err, Error::Parse { .. }));
         let err = finalize_upload("final", None).unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
+
+        let finalized = finalize_upload("final", Some(file.clone())).unwrap();
+        assert_eq!(finalized.name, file.name);
     }
 
     #[test]

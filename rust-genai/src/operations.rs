@@ -93,10 +93,7 @@ impl Operations {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<Operation>().await?)
     }
@@ -128,10 +125,7 @@ impl Operations {
             .send_with_http_options(request, http_options.as_ref())
             .await?;
         if !response.status().is_success() {
-            return Err(Error::ApiError {
-                status: response.status().as_u16(),
-                message: response.text().await.unwrap_or_default(),
-            });
+            return Err(Error::api_error_from_response(response, None).await);
         }
         Ok(response.json::<ListOperationsResponse>().await?)
     }
@@ -461,10 +455,7 @@ async fn fetch_predict_operation_value(
 
     let response = inner.send_with_http_options(request, http_options).await?;
     if !response.status().is_success() {
-        return Err(Error::ApiError {
-            status: response.status().as_u16(),
-            message: response.text().await.unwrap_or_default(),
-        });
+        return Err(Error::api_error_from_response(response, None).await);
     }
     Ok(response.json::<Value>().await?)
 }
@@ -481,10 +472,7 @@ async fn get_operation_value(
 
     let response = inner.send_with_http_options(request, http_options).await?;
     if !response.status().is_success() {
-        return Err(Error::ApiError {
-            status: response.status().as_u16(),
-            message: response.text().await.unwrap_or_default(),
-        });
+        return Err(Error::api_error_from_response(response, None).await);
     }
     Ok(response.json::<Value>().await?)
 }
@@ -585,8 +573,12 @@ fn apply_http_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{test_client_inner, test_vertex_inner_missing_config};
+    use crate::test_support::{
+        test_client_inner, test_client_inner_with_base, test_vertex_inner_missing_config,
+    };
     use std::collections::HashMap;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_normalize_operation_name() {
@@ -715,5 +707,64 @@ mod tests {
             })
             .await;
         assert!(matches!(result.unwrap_err(), Error::InvalidConfig { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_operation_value_helpers_surface_api_errors() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1beta/operations/bad"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "error": {
+                    "message": "operation failed",
+                    "status": "INTERNAL"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let gemini = Arc::new(test_client_inner_with_base(
+            Backend::GeminiApi,
+            &server.uri(),
+            "v1beta",
+        ));
+        let err = get_operation_value(&gemini, "bad", None).await.unwrap_err();
+        assert_eq!(err.status().unwrap().as_u16(), 500);
+        assert_eq!(err.code().as_deref(), Some("INTERNAL"));
+
+        Mock::given(method("POST"))
+            .and(path(
+                "/v1/projects/proj/locations/loc/publishers/google/models/veo-3:fetchPredictOperation",
+            ))
+            .and(body_json(serde_json::json!({
+                "operationName": "projects/proj/locations/loc/publishers/google/models/veo-3/operations/op-1"
+            })))
+            .respond_with(
+                ResponseTemplate::new(503).set_body_json(serde_json::json!({
+                    "error": {
+                        "message": "fetch failed",
+                        "status": "UNAVAILABLE"
+                    }
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let vertex = Arc::new(test_client_inner_with_base(
+            Backend::VertexAi,
+            &server.uri(),
+            "v1",
+        ));
+        let err = fetch_predict_operation_value(
+            &vertex,
+            "projects/proj/locations/loc/publishers/google/models/veo-3/operations/op-1",
+            "projects/proj/locations/loc/publishers/google/models/veo-3",
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status().unwrap().as_u16(), 503);
+        assert!(err.is_retryable());
     }
 }

@@ -1,0 +1,17 @@
+# rust-genai LLM Codegen Notes
+
+- Preferred client entrypoint: `rust_genai::Client::from_env()`
+- Stable low-cost text model for examples: `gemini-2.5-flash-lite`
+- Stable general-purpose text model: `gemini-2.5-flash`
+- Official Vertex environment variables:
+  - `GOOGLE_GENAI_USE_VERTEXAI=true`
+  - `GOOGLE_CLOUD_PROJECT=...`
+  - `GOOGLE_CLOUD_LOCATION=...`
+  - `GOOGLE_GENAI_API_VERSION=v1`
+- Preferred typed JSON helper:
+  - `client.models().generate_json::<T>(model, contents).await?`
+- Preferred streaming helper when event granularity matters:
+  - `client.models().generate_content_event_stream(model, contents, config).await?`
+  - handle `GenerateContentStreamEvent::{Text, FunctionCall, Usage, Response, Done}`
+- Prefer stable model names in docs and starter examples.
+- Use `Client::builder()` for custom timeout, proxy, retry, or explicit backend configuration.

@@ -59,6 +59,9 @@ pub struct HttpOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_body: Option<serde_json::Value>,
     /// HTTP retry options for the request.
+    ///
+    /// When omitted, the SDK default retry policy still applies.
+    /// Set `attempts: Some(1)` to request a single attempt with no retry loop.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_options: Option<HttpRetryOptions>,
 }

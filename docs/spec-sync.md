@@ -9,6 +9,7 @@ surface changes stay reviewable in Git.
 - API version guide mirror: `spec/api-versions.md`
 - Deprecation guide mirror: `spec/deprecations.md`
 - Snapshot manifest with hashes and source URLs: `spec/manifest.json`
+- Human-readable drift report: `spec/spec-diff.md`
 
 ## Local Run
 
@@ -21,11 +22,12 @@ git diff -- spec
 
 1. Run the sync script.
 2. Inspect `git diff -- spec` for new resources, fields, or model lifecycle changes.
-3. Map drift into code and docs updates:
+3. Read `spec/spec-diff.md` for a quick hash-level summary.
+4. Map drift into code and docs updates:
    - request/response types in `rust-genai-types`
    - client surfaces and request builders in `rust-genai`
    - examples, guides, and release notes
-4. Refresh tests for any new request body or path behavior.
+5. Refresh tests for any new request body or path behavior.
 
 ## CI Behavior
 
