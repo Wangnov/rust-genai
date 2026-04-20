@@ -202,6 +202,13 @@ fn merge_stream_response(
                 .candidates
                 .iter()
                 .position(|item| item.index == Some(index))
+                .or_else(|| {
+                    single_candidate_stream_position(
+                        &aggregate.candidates,
+                        response.candidates.len(),
+                        position,
+                    )
+                })
         } else if response.candidates.len() == 1 && aggregate.candidates.len() == 1 {
             Some(position)
         } else {
@@ -213,6 +220,21 @@ fn merge_stream_response(
         } else {
             aggregate.candidates.push(candidate.clone());
         }
+    }
+}
+
+fn single_candidate_stream_position(
+    aggregate_candidates: &[rust_genai_types::response::Candidate],
+    response_candidate_count: usize,
+    position: usize,
+) -> Option<usize> {
+    if response_candidate_count == 1
+        && aggregate_candidates.len() == 1
+        && aggregate_candidates[0].index.is_none()
+    {
+        Some(position)
+    } else {
+        None
     }
 }
 
@@ -265,8 +287,11 @@ fn merge_candidate(
 }
 
 fn merge_content_parts(existing_parts: &mut Vec<Part>, next_parts: &[Part]) {
-    for part in next_parts {
-        if merge_stream_part(existing_parts.last_mut(), part) {
+    for (position, part) in next_parts.iter().enumerate() {
+        if existing_parts
+            .get_mut(position)
+            .is_some_and(|existing_part| merge_stream_part(Some(existing_part), part))
+        {
             continue;
         }
         existing_parts.push(part.clone());

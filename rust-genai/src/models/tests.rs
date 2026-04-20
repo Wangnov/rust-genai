@@ -1410,6 +1410,67 @@ fn test_merge_stream_response_merges_indexed_candidate_metadata() {
 }
 
 #[test]
+fn test_merge_stream_response_merges_single_candidate_when_index_appears_later() {
+    let mut aggregate = None;
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![Candidate {
+                content: Some(Content::from_parts(vec![Part::text("Hel")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: None,
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            }],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![Candidate {
+                content: Some(Content::from_parts(vec![Part::text("lo")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(0),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            }],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    let aggregate = aggregate.unwrap();
+    assert_eq!(aggregate.candidates.len(), 1);
+    assert_eq!(aggregate.text().as_deref(), Some("Hello"));
+    assert_eq!(aggregate.candidates[0].index, Some(0));
+}
+
+#[test]
 fn test_stream_merge_helpers_respect_context_and_targets() {
     let resolution_low = PartMediaResolution {
         level: Some(PartMediaResolutionLevel::MediaResolutionLow),
@@ -1588,6 +1649,55 @@ fn test_stream_merge_helpers_respect_context_and_targets() {
         })],
     );
     assert_eq!(parts.len(), 2);
+}
+
+#[test]
+fn test_merge_content_parts_uses_part_positions_for_multi_part_chunks() {
+    let mut existing_parts = vec![
+        Part::text("hello"),
+        Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("Bei".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        }),
+    ];
+
+    merge_content_parts(
+        &mut existing_parts,
+        &[
+            Part::text(" world"),
+            Part::function_call(FunctionCall {
+                id: Some("call-1".into()),
+                name: Some("lookup".into()),
+                args: None,
+                partial_args: Some(vec![PartialArg {
+                    null_value: None,
+                    number_value: None,
+                    string_value: Some("jing".into()),
+                    bool_value: None,
+                    json_path: Some("$.city".into()),
+                    will_continue: Some(true),
+                }]),
+                will_continue: Some(true),
+            }),
+        ],
+    );
+
+    assert_eq!(existing_parts.len(), 2);
+    assert_eq!(existing_parts[0].text_value(), Some("hello world"));
+    let call = existing_parts[1].function_call_ref().unwrap();
+    assert_eq!(call.id.as_deref(), Some("call-1"));
+    assert_eq!(call.name.as_deref(), Some("lookup"));
+    assert_eq!(call.partial_args.as_ref().unwrap().len(), 2);
 }
 
 #[tokio::test]
