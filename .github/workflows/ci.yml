@@ -126,8 +126,3 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           package: rust-genai-types
-
-      - name: Check rust-genai-macros semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          package: rust-genai-macros

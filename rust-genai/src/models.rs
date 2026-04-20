@@ -242,7 +242,7 @@ fn merge_candidate(
         existing.token_count = next.token_count;
     }
     if next.finish_reason.is_some() {
-        existing.finish_reason = next.finish_reason.clone();
+        existing.finish_reason = next.finish_reason;
     }
     if next.avg_logprobs.is_some() {
         existing.avg_logprobs = next.avg_logprobs;

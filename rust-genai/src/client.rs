@@ -724,13 +724,7 @@ impl ClientInner {
         retry_options: &HttpRetryOptions,
     ) -> Result<reqwest::Response> {
         #[cfg(feature = "tracing")]
-        let trace_backend = backend_name(self.config.backend);
-        #[cfg(feature = "tracing")]
-        let trace_method = request_template.method().clone();
-        #[cfg(feature = "tracing")]
-        let trace_path = request_template.url().path().to_string();
-        #[cfg(feature = "tracing")]
-        let trace_model = trace_model_name(&trace_path).unwrap_or("");
+        let trace_request = TraceRequestInfo::new(self.config.backend, &request_template);
 
         let attempts = retry_options.attempts.unwrap_or(DEFAULT_RETRY_ATTEMPTS);
         let retryable_codes: &[u16] = retry_options
@@ -743,15 +737,14 @@ impl ClientInner {
             let mut response = self.execute_once(request_template).await?;
             #[cfg(feature = "tracing")]
             emit_request_trace(
-                trace_backend,
-                &trace_method,
-                &trace_path,
-                trace_model,
-                1,
-                attempts,
+                &trace_request,
+                TraceAttemptInfo::new(
+                    1,
+                    attempts,
+                    attempt_started.elapsed(),
+                    retryable_codes.contains(&response.status().as_u16()),
+                ),
                 &response,
-                attempt_started.elapsed(),
-                retryable_codes.contains(&response.status().as_u16()),
             );
             if !response.status().is_success() {
                 attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
@@ -766,15 +759,14 @@ impl ClientInner {
             let mut response = self.execute_once(request_template).await?;
             #[cfg(feature = "tracing")]
             emit_request_trace(
-                trace_backend,
-                &trace_method,
-                &trace_path,
-                trace_model,
-                1,
-                1,
+                &trace_request,
+                TraceAttemptInfo::new(
+                    1,
+                    1,
+                    attempt_started.elapsed(),
+                    retryable_codes.contains(&response.status().as_u16()),
+                ),
                 &response,
-                attempt_started.elapsed(),
-                retryable_codes.contains(&response.status().as_u16()),
             );
             if !response.status().is_success() {
                 attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
@@ -795,15 +787,9 @@ impl ClientInner {
             if response.status().is_success() {
                 #[cfg(feature = "tracing")]
                 emit_request_trace(
-                    trace_backend,
-                    &trace_method,
-                    &trace_path,
-                    trace_model,
-                    attempt + 1,
-                    attempts,
+                    &trace_request,
+                    TraceAttemptInfo::new(attempt + 1, attempts, elapsed, false),
                     &response,
-                    elapsed,
-                    false,
                 );
                 return Ok(response);
             }
@@ -812,15 +798,9 @@ impl ClientInner {
             let should_retry = retryable_codes.contains(&status);
             #[cfg(feature = "tracing")]
             emit_request_trace(
-                trace_backend,
-                &trace_method,
-                &trace_path,
-                trace_model,
-                attempt + 1,
-                attempts,
+                &trace_request,
+                TraceAttemptInfo::new(attempt + 1, attempts, elapsed, should_retry),
                 &response,
-                elapsed,
-                should_retry,
             );
             let is_last_attempt = attempt + 1 >= attempts;
             if !should_retry || is_last_attempt {
@@ -1048,29 +1028,64 @@ fn trace_model_name(path: &str) -> Option<&str> {
 }
 
 #[cfg(feature = "tracing")]
-fn emit_request_trace(
+struct TraceRequestInfo {
     backend: &'static str,
-    method: &reqwest::Method,
-    path: &str,
-    model: &str,
+    method: reqwest::Method,
+    path: String,
+    model: String,
+}
+
+#[cfg(feature = "tracing")]
+impl TraceRequestInfo {
+    fn new(backend: Backend, request: &reqwest::Request) -> Self {
+        let path = request.url().path().to_string();
+        Self {
+            backend: backend_name(backend),
+            method: request.method().clone(),
+            model: trace_model_name(&path).unwrap_or_default().to_string(),
+            path,
+        }
+    }
+}
+
+#[cfg(feature = "tracing")]
+struct TraceAttemptInfo {
     attempt: u32,
     max_attempts: u32,
-    response: &reqwest::Response,
     elapsed: Duration,
     retryable: bool,
+}
+
+#[cfg(feature = "tracing")]
+impl TraceAttemptInfo {
+    fn new(attempt: u32, max_attempts: u32, elapsed: Duration, retryable: bool) -> Self {
+        Self {
+            attempt,
+            max_attempts,
+            elapsed,
+            retryable,
+        }
+    }
+}
+
+#[cfg(feature = "tracing")]
+fn emit_request_trace(
+    request: &TraceRequestInfo,
+    attempt: TraceAttemptInfo,
+    response: &reqwest::Response,
 ) {
     tracing::debug!(
         target: "rust_genai::http",
-        backend = backend,
-        method = %method,
-        path = path,
-        model = model,
-        attempt = attempt,
-        max_attempts = max_attempts,
+        backend = request.backend,
+        method = %request.method,
+        path = request.path,
+        model = request.model,
+        attempt = attempt.attempt,
+        max_attempts = attempt.max_attempts,
         status = response.status().as_u16(),
-        retryable = retryable,
+        retryable = attempt.retryable,
         retry_after_secs = retry_after_delay_secs(response.headers()),
-        latency_ms = elapsed.as_millis() as u64,
+        latency_ms = attempt.elapsed.as_millis() as u64,
         "request completed",
     );
 }
