@@ -360,7 +360,9 @@ fn merge_candidate(
 
 fn merge_content_parts(existing_parts: &mut Vec<Part>, next_parts: &[Part]) {
     for (position, part) in next_parts.iter().enumerate() {
-        if let Some(existing_position) = find_mergeable_part_index(existing_parts, position, part) {
+        if let Some(existing_position) =
+            find_mergeable_part_index(existing_parts, position, next_parts.len(), part)
+        {
             merge_stream_part(existing_parts.get_mut(existing_position), part);
             continue;
         }
@@ -371,11 +373,16 @@ fn merge_content_parts(existing_parts: &mut Vec<Part>, next_parts: &[Part]) {
 fn find_mergeable_part_index(
     existing_parts: &[Part],
     position: usize,
+    next_part_count: usize,
     next_part: &Part,
 ) -> Option<usize> {
-    if existing_parts
-        .get(position)
-        .is_some_and(|existing_part| stream_parts_can_merge(existing_part, next_part))
+    let remaining_existing = existing_parts.len().saturating_sub(position);
+    let remaining_next = next_part_count.saturating_sub(position);
+
+    if remaining_existing == remaining_next
+        && existing_parts
+            .get(position)
+            .is_some_and(|existing_part| stream_parts_can_merge(existing_part, next_part))
     {
         return Some(position);
     }
@@ -497,7 +504,15 @@ fn function_calls_share_target(existing: &FunctionCall, next: &FunctionCall) -> 
         false
     };
 
-    shared_id || shared_name
+    if shared_id || shared_name {
+        return true;
+    }
+
+    !function_call_has_identifier(existing) || !function_call_has_identifier(next)
+}
+
+fn function_call_has_identifier(call: &FunctionCall) -> bool {
+    call.id.is_some() || call.name.is_some()
 }
 
 fn merge_function_call(existing: &mut FunctionCall, next: &FunctionCall) {

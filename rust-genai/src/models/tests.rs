@@ -2014,6 +2014,29 @@ fn test_stream_merge_helpers_respect_context_and_targets() {
             will_continue: None,
         }
     ));
+    assert!(function_calls_share_target(
+        &FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: None,
+            will_continue: None,
+        },
+        &FunctionCall {
+            id: None,
+            name: None,
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("jing".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        }
+    ));
 
     let mut merged_call_part = Part::function_call(lookup_call);
     assert!(merge_stream_part(
@@ -2196,6 +2219,51 @@ fn test_merge_content_parts_merges_sparse_function_call_delta() {
 }
 
 #[test]
+fn test_merge_content_parts_merges_identifierless_function_call_delta() {
+    let mut existing_parts = vec![
+        Part::text("prefix"),
+        Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("Bei".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        }),
+    ];
+
+    merge_content_parts(
+        &mut existing_parts,
+        &[Part::function_call(FunctionCall {
+            id: None,
+            name: None,
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("jing".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        })],
+    );
+
+    assert_eq!(existing_parts.len(), 2);
+    let call = existing_parts[1].function_call_ref().unwrap();
+    assert_eq!(call.id.as_deref(), Some("call-1"));
+    assert_eq!(call.name.as_deref(), Some("lookup"));
+    assert_eq!(call.partial_args.as_ref().unwrap().len(), 2);
+}
+
+#[test]
 fn test_find_mergeable_part_index_requires_unique_sparse_match() {
     let existing_parts = vec![
         Part::function_call(FunctionCall {
@@ -2209,7 +2277,7 @@ fn test_find_mergeable_part_index_requires_unique_sparse_match() {
         Part::text("b"),
     ];
     assert_eq!(
-        find_mergeable_part_index(&existing_parts, 0, &Part::text("c")),
+        find_mergeable_part_index(&existing_parts, 0, 1, &Part::text("c")),
         None
     );
 
@@ -2227,6 +2295,7 @@ fn test_find_mergeable_part_index_requires_unique_sparse_match() {
         find_mergeable_part_index(
             &mixed_parts,
             0,
+            1,
             &Part::function_call(FunctionCall {
                 id: Some("call-1".into()),
                 name: Some("lookup".into()),
@@ -2237,6 +2306,26 @@ fn test_find_mergeable_part_index_requires_unique_sparse_match() {
         ),
         Some(1)
     );
+}
+
+#[test]
+fn test_find_mergeable_part_index_avoids_ambiguous_sparse_text_merge() {
+    let existing_parts = vec![Part::text("first"), Part::text("second")];
+    assert_eq!(
+        find_mergeable_part_index(&existing_parts, 0, 1, &Part::text(" delta")),
+        None
+    );
+}
+
+#[test]
+fn test_merge_content_parts_uses_positions_for_aligned_text_chunks() {
+    let mut existing_parts = vec![Part::text("first"), Part::text("second")];
+
+    merge_content_parts(&mut existing_parts, &[Part::text("!"), Part::text("?")]);
+
+    assert_eq!(existing_parts.len(), 2);
+    assert_eq!(existing_parts[0].text_value(), Some("first!"));
+    assert_eq!(existing_parts[1].text_value(), Some("second?"));
 }
 
 #[tokio::test]
