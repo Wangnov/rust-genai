@@ -567,6 +567,7 @@ fn stream_request_config() -> GenerateContentConfig {
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 struct JsonSmokeResponse {
     ok: bool,
 }
@@ -730,6 +731,82 @@ async fn test_generate_json_rejects_invalid_json() {
     assert!(matches!(err, Error::Serialization { .. }));
 }
 
+#[cfg(feature = "schemars")]
+#[tokio::test]
+async fn test_generate_json_with_schema_sets_response_json_schema() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-1.5-pro:generateContent"))
+        .and(wiremock::matchers::body_string_contains(
+            "\"responseMimeType\":\"application/json\"",
+        ))
+        .and(wiremock::matchers::body_string_contains(
+            "\"responseJsonSchema\"",
+        ))
+        .and(wiremock::matchers::body_string_contains(
+            "\"required\":[\"ok\"]",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "{\"ok\":true}"}]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+
+    let parsed = client
+        .models()
+        .generate_json_with_schema::<JsonSmokeResponse>(
+            "gemini-1.5-pro",
+            vec![Content::text("return json")],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(parsed, JsonSmokeResponse { ok: true });
+}
+
+#[cfg(feature = "schemars")]
+#[tokio::test]
+async fn test_generate_json_with_schema_rejects_existing_schema_config() {
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url("http://localhost.invalid")
+        .build()
+        .unwrap();
+
+    let err = client
+        .models()
+        .generate_json_with_schema_with_config::<JsonSmokeResponse>(
+            "gemini-1.5-pro",
+            vec![Content::text("return json")],
+            GenerateContentConfig {
+                generation_config: Some(GenerationConfig {
+                    response_schema: Some(rust_genai_types::tool::Schema::string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        Error::InvalidConfig { ref message }
+            if message.contains("empty response schema configuration")
+    ));
+}
+
 #[tokio::test]
 async fn test_generate_content_event_stream_emits_text_response_and_done() {
     let server = MockServer::start().await;
@@ -796,6 +873,68 @@ async fn test_generate_content_event_stream_emits_text_response_and_done() {
                     == Some("1")
     ));
     assert!(fourth.is_none());
+}
+
+#[tokio::test]
+async fn test_generate_content_event_stream_done_is_aggregated() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-1.5-pro:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi \"}]}}]}\n\n\
+                     data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"there\"}]}}]}\n\n\
+                     data: [DONE]\n\n",
+                ),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("test-key")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+    let mut stream = client
+        .models()
+        .generate_content_event_stream(
+            "gemini-1.5-pro",
+            vec![Content::text("hi")],
+            GenerateContentConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    let first = stream.next_event().await.unwrap().unwrap();
+    let second = stream.next_event().await.unwrap().unwrap();
+    let third = stream.next_event().await.unwrap().unwrap();
+    let fourth = stream.next_event().await.unwrap().unwrap();
+    let fifth = stream.next_event().await.unwrap().unwrap();
+    let sixth = stream.next_event().await.unwrap();
+
+    assert!(matches!(first, GenerateContentStreamEvent::Text(ref text) if text == "Hi "));
+    assert!(matches!(
+        second,
+        GenerateContentStreamEvent::Response(ref response)
+            if response.text() == Some("Hi ".to_string())
+    ));
+    assert!(matches!(third, GenerateContentStreamEvent::Text(ref text) if text == "there"));
+    assert!(matches!(
+        fourth,
+        GenerateContentStreamEvent::Response(ref response)
+            if response.text() == Some("there".to_string())
+    ));
+    assert!(matches!(
+        fifth,
+        GenerateContentStreamEvent::Done(ref response)
+            if response.text() == Some("Hi there".to_string())
+    ));
+    assert!(sixth.is_none());
 }
 
 #[tokio::test]

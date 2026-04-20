@@ -25,7 +25,9 @@
 - 默认自动重试 `408`、`429`、`500`、`502`、`503`、`504`
 - 流式响应（SSE）
 - 结构化 JSON 生成辅助（`generate_json`）
+- 基于 `schemars` 的 JSON Schema 生成辅助（feature: `schemars`）
 - 事件级流式辅助（`generate_content_event_stream`）
+- 结构化 HTTP tracing 钩子（feature: `tracing`）
 - 函数调用和工具系统
 - 自动函数调用（AFC）与可调用工具
 - Live API、会话恢复、Live Music（实验性）
@@ -49,6 +51,13 @@
 ```toml
 [dependencies]
 rust-genai = "0.3.1"
+```
+
+按需启用扩展 feature：
+
+```toml
+[dependencies]
+rust-genai = { version = "0.3.1", features = ["schemars", "tracing"] }
 ```
 
 ## 快速开始
@@ -131,7 +140,9 @@ Rust SDK for the Google Gemini API and Vertex AI. This workspace aims to stay fe
 - Default automatic retries for `408`, `429`, `500`, `502`, `503`, and `504`
 - Streaming (SSE)
 - Structured JSON generation helper (`generate_json`)
+- JSON Schema-backed structured generation helper (`schemars` feature)
 - Event-level streaming helper (`generate_content_event_stream`)
+- Structured HTTP tracing hooks (`tracing` feature)
 - Function calling and tool system
 - Automatic function calling (AFC) with callable tools
 - Live API, session resumption, and Live Music (experimental)
@@ -155,6 +166,13 @@ Current MSRV is Rust 1.88+; the `mcp` feature also requires 1.88+ due to upstrea
 ```toml
 [dependencies]
 rust-genai = "0.3.1"
+```
+
+Enable optional features as needed:
+
+```toml
+[dependencies]
+rust-genai = { version = "0.3.1", features = ["schemars", "tracing"] }
 ```
 
 ## Quickstart

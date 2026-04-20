@@ -22,7 +22,9 @@ async fn main() -> rust_genai::Result<()> {
                 println!("usage: {:?}", usage.total_token_count)
             }
             GenerateContentStreamEvent::Response(_) => {}
-            GenerateContentStreamEvent::Done(_) => println!("done"),
+            GenerateContentStreamEvent::Done(response) => {
+                println!("done: {}", response.text().unwrap_or_default())
+            }
         }
     }
 

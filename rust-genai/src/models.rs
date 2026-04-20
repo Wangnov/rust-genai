@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use futures_util::{Stream, StreamExt};
-use rust_genai_types::content::{Content, FunctionCall, Role};
+use rust_genai_types::content::{Content, FunctionCall, Part, PartKind, Role};
 use rust_genai_types::converters;
 use rust_genai_types::models::{
     ComputeTokensConfig, ComputeTokensRequest, ComputeTokensResponse, CountTokensConfig,
@@ -66,17 +66,22 @@ pub struct Models {
 
 #[derive(Debug, Clone)]
 pub enum GenerateContentStreamEvent {
+    /// Text delta extracted from a streaming chunk.
     Text(String),
+    /// Function call surfaced by a streaming chunk.
     FunctionCall(FunctionCall),
+    /// Usage metadata emitted by a streaming chunk.
     Usage(GenerateContentResponseUsageMetadata),
+    /// Raw response chunk.
     Response(GenerateContentResponse),
+    /// Aggregated final response assembled from the full stream.
     Done(GenerateContentResponse),
 }
 
 pub struct GenerateContentEventStream {
     inner: Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>,
     pending: VecDeque<GenerateContentStreamEvent>,
-    last_response: Option<GenerateContentResponse>,
+    aggregate_response: Option<GenerateContentResponse>,
     saw_done: Arc<AtomicBool>,
     finished: bool,
 }
@@ -89,7 +94,7 @@ impl GenerateContentEventStream {
         Self {
             inner,
             pending: VecDeque::new(),
-            last_response: None,
+            aggregate_response: None,
             saw_done,
             finished: false,
         }
@@ -107,7 +112,7 @@ impl GenerateContentEventStream {
 
             match self.inner.next().await {
                 Some(Ok(response)) => {
-                    self.last_response = Some(response.clone());
+                    merge_stream_response(&mut self.aggregate_response, &response);
                     enqueue_stream_events(&mut self.pending, response);
                 }
                 Some(Err(err)) => {
@@ -117,11 +122,11 @@ impl GenerateContentEventStream {
                 None => {
                     self.finished = true;
                     if self.saw_done.load(Ordering::Relaxed) {
-                        if let Some(response) = self.last_response.take() {
+                        if let Some(response) = self.aggregate_response.take() {
                             return Ok(Some(GenerateContentStreamEvent::Done(response)));
                         }
                     }
-                    self.last_response.take();
+                    self.aggregate_response.take();
                     return Ok(None);
                 }
             }
@@ -151,6 +156,184 @@ fn enqueue_stream_events(
     }
 
     pending.push_back(GenerateContentStreamEvent::Response(response));
+}
+
+fn merge_stream_response(
+    aggregate: &mut Option<GenerateContentResponse>,
+    response: &GenerateContentResponse,
+) {
+    let aggregate = aggregate.get_or_insert_with(|| GenerateContentResponse {
+        sdk_http_response: response.sdk_http_response.clone(),
+        candidates: Vec::new(),
+        create_time: response.create_time.clone(),
+        automatic_function_calling_history: response.automatic_function_calling_history.clone(),
+        prompt_feedback: response.prompt_feedback.clone(),
+        usage_metadata: response.usage_metadata.clone(),
+        model_version: response.model_version.clone(),
+        response_id: response.response_id.clone(),
+    });
+
+    if response.sdk_http_response.is_some() {
+        aggregate.sdk_http_response = response.sdk_http_response.clone();
+    }
+    if response.create_time.is_some() {
+        aggregate.create_time = response.create_time.clone();
+    }
+    if response.automatic_function_calling_history.is_some() {
+        aggregate.automatic_function_calling_history =
+            response.automatic_function_calling_history.clone();
+    }
+    if response.prompt_feedback.is_some() {
+        aggregate.prompt_feedback = response.prompt_feedback.clone();
+    }
+    if response.usage_metadata.is_some() {
+        aggregate.usage_metadata = response.usage_metadata.clone();
+    }
+    if response.model_version.is_some() {
+        aggregate.model_version = response.model_version.clone();
+    }
+    if response.response_id.is_some() {
+        aggregate.response_id = response.response_id.clone();
+    }
+
+    for (position, candidate) in response.candidates.iter().enumerate() {
+        let existing_position = if let Some(index) = candidate.index {
+            aggregate
+                .candidates
+                .iter()
+                .position(|item| item.index == Some(index))
+        } else if position < aggregate.candidates.len() {
+            Some(position)
+        } else {
+            None
+        };
+
+        if let Some(existing_position) = existing_position {
+            merge_candidate(&mut aggregate.candidates[existing_position], candidate);
+        } else {
+            aggregate.candidates.push(candidate.clone());
+        }
+    }
+}
+
+fn merge_candidate(
+    existing: &mut rust_genai_types::response::Candidate,
+    next: &rust_genai_types::response::Candidate,
+) {
+    if let Some(content) = &next.content {
+        match &mut existing.content {
+            Some(existing_content) => {
+                if existing_content.role.is_none() {
+                    existing_content.role = content.role;
+                }
+                merge_content_parts(&mut existing_content.parts, &content.parts);
+            }
+            None => existing.content = Some(content.clone()),
+        }
+    }
+
+    if next.citation_metadata.is_some() {
+        existing.citation_metadata = next.citation_metadata.clone();
+    }
+    if next.finish_message.is_some() {
+        existing.finish_message = next.finish_message.clone();
+    }
+    if next.token_count.is_some() {
+        existing.token_count = next.token_count;
+    }
+    if next.finish_reason.is_some() {
+        existing.finish_reason = next.finish_reason.clone();
+    }
+    if next.avg_logprobs.is_some() {
+        existing.avg_logprobs = next.avg_logprobs;
+    }
+    if next.grounding_metadata.is_some() {
+        existing.grounding_metadata = next.grounding_metadata.clone();
+    }
+    if next.index.is_some() {
+        existing.index = next.index;
+    }
+    if next.logprobs_result.is_some() {
+        existing.logprobs_result = next.logprobs_result.clone();
+    }
+    if !next.safety_ratings.is_empty() {
+        existing.safety_ratings = next.safety_ratings.clone();
+    }
+    if next.url_context_metadata.is_some() {
+        existing.url_context_metadata = next.url_context_metadata.clone();
+    }
+}
+
+fn merge_content_parts(existing_parts: &mut Vec<Part>, next_parts: &[Part]) {
+    for part in next_parts {
+        if let Some(buffer) = mergeable_text_buffer(existing_parts.last_mut(), part) {
+            if let PartKind::Text { text } = &part.kind {
+                buffer.push_str(text);
+                continue;
+            }
+        }
+        existing_parts.push(part.clone());
+    }
+}
+
+fn mergeable_text_buffer<'a>(
+    last_part: Option<&'a mut Part>,
+    next_part: &Part,
+) -> Option<&'a mut String> {
+    let last_part = last_part?;
+    if last_part.thought.is_some()
+        || last_part.thought_signature.is_some()
+        || last_part.media_resolution.is_some()
+        || last_part.video_metadata.is_some()
+        || next_part.thought.is_some()
+        || next_part.thought_signature.is_some()
+        || next_part.media_resolution.is_some()
+        || next_part.video_metadata.is_some()
+    {
+        return None;
+    }
+
+    match (&mut last_part.kind, &next_part.kind) {
+        (PartKind::Text { text: existing }, PartKind::Text { .. }) => Some(existing),
+        _ => None,
+    }
+}
+
+fn prepare_json_generation_config(
+    mut config: GenerateContentConfig,
+    schema: Option<Value>,
+) -> Result<GenerateContentConfig> {
+    let generation_config = config
+        .generation_config
+        .get_or_insert_with(Default::default);
+    match generation_config.response_mime_type.as_deref() {
+        Some("application/json") => {}
+        Some(other) => {
+            return Err(Error::InvalidConfig {
+                message: format!(
+                    "generate_json_with_config requires response_mime_type = application/json, got {other}"
+                ),
+            });
+        }
+        None => {
+            generation_config.response_mime_type = Some("application/json".into());
+        }
+    }
+
+    if let Some(schema) = schema {
+        if generation_config.response_schema.is_some()
+            || generation_config.response_json_schema.is_some()
+        {
+            return Err(Error::InvalidConfig {
+                message:
+                    "generate_json_with_schema_with_config requires an empty response schema configuration"
+                        .into(),
+            });
+        }
+        generation_config.response_json_schema = Some(schema);
+    }
+
+    Ok(config)
 }
 
 struct CallableStreamContext<S> {
@@ -355,25 +538,63 @@ impl Models {
         &self,
         model: impl Into<String>,
         contents: Vec<Content>,
-        mut config: GenerateContentConfig,
+        config: GenerateContentConfig,
     ) -> Result<T> {
-        let generation_config = config
-            .generation_config
-            .get_or_insert_with(Default::default);
-        match generation_config.response_mime_type.as_deref() {
-            Some("application/json") => {}
-            Some(other) => {
-                return Err(Error::InvalidConfig {
-                    message: format!(
-                        "generate_json_with_config requires response_mime_type = application/json, got {other}"
-                    ),
-                });
-            }
-            None => {
-                generation_config.response_mime_type = Some("application/json".into());
-            }
-        }
+        let config = prepare_json_generation_config(config, None)?;
 
+        let response = self
+            .generate_content_with_config(model, contents, config)
+            .await?;
+        let text = first_candidate_text(&response).ok_or_else(|| Error::Parse {
+            message: "Expected text response containing JSON".into(),
+        })?;
+
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    /// 生成并解析 JSON 响应，同时自动附加 JSON Schema。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容、schema 构建失败或 JSON 解析失败时返回错误。
+    ///
+    /// 需要启用 `schemars` feature。
+    #[cfg(feature = "schemars")]
+    pub async fn generate_json_with_schema<T>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned + schemars::JsonSchema,
+    {
+        self.generate_json_with_schema_with_config(
+            model,
+            contents,
+            GenerateContentConfig::default(),
+        )
+        .await
+    }
+
+    /// 生成并解析 JSON 响应，同时自动附加 JSON Schema（自定义配置）。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容、schema 构建失败或 JSON 解析失败时返回错误。
+    ///
+    /// 需要启用 `schemars` feature。
+    #[cfg(feature = "schemars")]
+    pub async fn generate_json_with_schema_with_config<T>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+        config: GenerateContentConfig,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned + schemars::JsonSchema,
+    {
+        let schema = serde_json::to_value(schemars::schema_for!(T))?;
+        let config = prepare_json_generation_config(config, Some(schema))?;
         let response = self
             .generate_content_with_config(model, contents, config)
             .await?;
