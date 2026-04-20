@@ -905,11 +905,7 @@ fn bounded_retry_delay_secs(
         .max_delay
         .unwrap_or(DEFAULT_RETRY_MAX_DELAY_SECS)
         .max(0.0);
-    if max_delay > 0.0 {
-        delay.min(max_delay)
-    } else {
-        delay
-    }
+    delay.min(max_delay)
 }
 
 fn retry_delay_secs(options: &HttpRetryOptions, retry_index: u32) -> f64 {
@@ -1314,6 +1310,17 @@ mod tests {
 
         let delay = bounded_retry_delay_secs(&options, 0, Some(1.5));
         assert_eq!(delay, 1.5);
+    }
+
+    #[test]
+    fn test_bounded_retry_delay_secs_caps_retry_after_at_zero() {
+        let options = HttpRetryOptions {
+            max_delay: Some(0.0),
+            ..Default::default()
+        };
+
+        let delay = bounded_retry_delay_secs(&options, 0, Some(120.0));
+        assert_eq!(delay, 0.0);
     }
 
     #[test]

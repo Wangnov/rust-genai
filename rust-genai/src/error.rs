@@ -339,7 +339,7 @@ fn bound_headers(headers: HashMap<String, String>) -> Option<HashMap<String, Str
     for (name, value) in headers {
         let required = name.len() + value.len();
         if required > remaining {
-            break;
+            continue;
         }
         remaining -= required;
         bounded.insert(name, value);
@@ -562,6 +562,23 @@ mod tests {
                 <= API_ERROR_METADATA_MAX_HEADERS_BYTES
         );
         assert!(matches!(metadata.details, Some(Value::String(_))));
+    }
+
+    #[test]
+    fn bound_headers_keeps_smaller_headers_after_large_entries() {
+        let headers = HashMap::from([
+            (
+                "x-large".to_string(),
+                "v".repeat(API_ERROR_METADATA_MAX_HEADERS_BYTES + 1),
+            ),
+            ("retry-after".to_string(), "7".to_string()),
+            ("x-small".to_string(), "ok".to_string()),
+        ]);
+
+        let bounded = bound_headers(headers).unwrap();
+        assert_eq!(bounded.get("retry-after").map(String::as_str), Some("7"));
+        assert_eq!(bounded.get("x-small").map(String::as_str), Some("ok"));
+        assert!(!bounded.contains_key("x-large"));
     }
 
     #[test]
