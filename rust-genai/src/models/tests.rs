@@ -1471,6 +1471,83 @@ fn test_merge_stream_response_merges_single_candidate_when_index_appears_later()
 }
 
 #[test]
+fn test_merge_stream_response_keeps_distinct_sparse_candidate_with_late_index() {
+    let mut aggregate = None;
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![Candidate {
+                content: Some(Content::from_parts(vec![Part::text("first")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: None,
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            }],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    merge_stream_response(
+        &mut aggregate,
+        &GenerateContentResponse {
+            sdk_http_response: None,
+            candidates: vec![Candidate {
+                content: Some(Content::from_parts(vec![Part::text("second")], Role::Model)),
+                citation_metadata: None,
+                finish_message: None,
+                token_count: None,
+                finish_reason: None,
+                avg_logprobs: None,
+                grounding_metadata: None,
+                index: Some(1),
+                logprobs_result: None,
+                safety_ratings: Vec::new(),
+                url_context_metadata: None,
+            }],
+            create_time: None,
+            automatic_function_calling_history: None,
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+            response_id: None,
+        },
+    );
+
+    let aggregate = aggregate.unwrap();
+    assert_eq!(aggregate.candidates.len(), 2);
+    assert_eq!(
+        aggregate.candidates[0]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("first")
+    );
+    assert_eq!(aggregate.candidates[0].index, None);
+    assert_eq!(
+        aggregate.candidates[1]
+            .content
+            .as_ref()
+            .unwrap()
+            .first_text(),
+        Some("second")
+    );
+    assert_eq!(aggregate.candidates[1].index, Some(1));
+}
+
+#[test]
 fn test_merge_stream_response_merges_late_index_into_sparse_multi_candidate() {
     let mut aggregate = None;
     merge_stream_response(

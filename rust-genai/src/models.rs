@@ -231,15 +231,17 @@ fn late_index_stream_position(
     response_candidate_count: usize,
     position: usize,
 ) -> Option<usize> {
+    let index_position = usize::try_from(index).ok();
+
     if response_candidate_count == 1
         && aggregate_candidates.len() == 1
         && aggregate_candidates[0].index.is_none()
+        && index_position == Some(position)
     {
         return Some(position);
     }
 
-    usize::try_from(index)
-        .ok()
+    index_position
         .filter(|&candidate_position| candidate_position < aggregate_candidates.len())
         .filter(|&candidate_position| aggregate_candidates[candidate_position].index.is_none())
 }
