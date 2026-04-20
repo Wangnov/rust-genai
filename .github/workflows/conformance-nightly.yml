@@ -1,0 +1,93 @@
+name: Conformance Nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "11 3 * * *"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mock-conformance:
+    name: Mock Conformance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run mock conformance suite
+        run: cargo test -p rust-genai --test conformance -- --nocapture
+
+  live-gemini:
+    name: Live Gemini Conformance
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      GENAI_CONFORMANCE_GEMINI_MODEL: ${{ vars.GENAI_CONFORMANCE_GEMINI_MODEL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run live Gemini conformance suite
+        shell: bash
+        run: |
+          if [ -z "${GEMINI_API_KEY}" ] && [ -z "${GOOGLE_API_KEY}" ]; then
+            echo "Skipping live Gemini conformance: GEMINI_API_KEY or GOOGLE_API_KEY is not configured."
+            exit 0
+          fi
+          cargo test -p rust-genai --test conformance live_gemini_ -- --ignored --nocapture
+
+  live-vertex:
+    name: Live Vertex Conformance
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      GOOGLE_CLOUD_LOCATION: ${{ secrets.GOOGLE_CLOUD_LOCATION }}
+      GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+      GENAI_CONFORMANCE_VERTEX_MODEL: ${{ vars.GENAI_CONFORMANCE_VERTEX_MODEL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Write ADC credentials
+        shell: bash
+        run: |
+          if [ -z "${GOOGLE_CLOUD_PROJECT}" ] || [ -z "${GOOGLE_CLOUD_LOCATION}" ] || [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON}" ]; then
+            echo "Skipping live Vertex conformance: Vertex secrets are not fully configured."
+            exit 0
+          fi
+          creds_path="${RUNNER_TEMP}/gcp-adc.json"
+          printf '%s' "${GOOGLE_APPLICATION_CREDENTIALS_JSON}" > "${creds_path}"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${creds_path}" >> "${GITHUB_ENV}"
+
+      - name: Run live Vertex conformance suite
+        shell: bash
+        run: |
+          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+            echo "Skipping live Vertex conformance: ADC credentials are not available."
+            exit 0
+          fi
+          cargo test -p rust-genai --test conformance live_vertex_ -- --ignored --nocapture

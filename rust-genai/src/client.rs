@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
+#[cfg(feature = "tracing")]
+use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
@@ -721,13 +723,29 @@ impl ClientInner {
         request_template: reqwest::Request,
         retry_options: &HttpRetryOptions,
     ) -> Result<reqwest::Response> {
+        #[cfg(feature = "tracing")]
+        let trace_request = TraceRequestInfo::new(self.config.backend, &request_template);
+
         let attempts = retry_options.attempts.unwrap_or(DEFAULT_RETRY_ATTEMPTS);
         let retryable_codes: &[u16] = retry_options
             .http_status_codes
             .as_deref()
             .unwrap_or(&DEFAULT_RETRY_HTTP_STATUS_CODES);
         if attempts <= 1 {
+            #[cfg(feature = "tracing")]
+            let attempt_started = Instant::now();
             let mut response = self.execute_once(request_template).await?;
+            #[cfg(feature = "tracing")]
+            emit_request_trace(
+                &trace_request,
+                TraceAttemptInfo::new(
+                    1,
+                    attempts,
+                    attempt_started.elapsed(),
+                    retryable_codes.contains(&response.status().as_u16()),
+                ),
+                &response,
+            );
             if !response.status().is_success() {
                 attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
             }
@@ -736,7 +754,20 @@ impl ClientInner {
 
         // If the request body can't be cloned, we can't safely retry.
         if request_template.try_clone().is_none() {
+            #[cfg(feature = "tracing")]
+            let attempt_started = Instant::now();
             let mut response = self.execute_once(request_template).await?;
+            #[cfg(feature = "tracing")]
+            emit_request_trace(
+                &trace_request,
+                TraceAttemptInfo::new(
+                    1,
+                    1,
+                    attempt_started.elapsed(),
+                    retryable_codes.contains(&response.status().as_u16()),
+                ),
+                &response,
+            );
             if !response.status().is_success() {
                 attach_retry_metadata_for_codes(&mut response, 1, retryable_codes);
             }
@@ -747,14 +778,30 @@ impl ClientInner {
             let request = request_template
                 .try_clone()
                 .expect("request_template is cloneable");
+            #[cfg(feature = "tracing")]
+            let attempt_started = Instant::now();
             let response = self.execute_once(request).await?;
+            #[cfg(feature = "tracing")]
+            let elapsed = attempt_started.elapsed();
 
             if response.status().is_success() {
+                #[cfg(feature = "tracing")]
+                emit_request_trace(
+                    &trace_request,
+                    TraceAttemptInfo::new(attempt + 1, attempts, elapsed, false),
+                    &response,
+                );
                 return Ok(response);
             }
 
             let status = response.status().as_u16();
             let should_retry = retryable_codes.contains(&status);
+            #[cfg(feature = "tracing")]
+            emit_request_trace(
+                &trace_request,
+                TraceAttemptInfo::new(attempt + 1, attempts, elapsed, should_retry),
+                &response,
+            );
             let is_last_attempt = attempt + 1 >= attempts;
             if !should_retry || is_last_attempt {
                 let mut response = response;
@@ -962,6 +1009,85 @@ fn default_auth_scopes(backend: Backend) -> Vec<String> {
             "https://www.googleapis.com/auth/generative-language.retriever".into(),
         ],
     }
+}
+
+#[cfg(feature = "tracing")]
+fn backend_name(backend: Backend) -> &'static str {
+    match backend {
+        Backend::GeminiApi => "gemini",
+        Backend::VertexAi => "vertex",
+    }
+}
+
+#[cfg(feature = "tracing")]
+fn trace_model_name(path: &str) -> Option<&str> {
+    path.split("/models/")
+        .nth(1)
+        .and_then(|value| value.split(':').next())
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(feature = "tracing")]
+struct TraceRequestInfo {
+    backend: &'static str,
+    method: reqwest::Method,
+    path: String,
+    model: String,
+}
+
+#[cfg(feature = "tracing")]
+impl TraceRequestInfo {
+    fn new(backend: Backend, request: &reqwest::Request) -> Self {
+        let path = request.url().path().to_string();
+        Self {
+            backend: backend_name(backend),
+            method: request.method().clone(),
+            model: trace_model_name(&path).unwrap_or_default().to_string(),
+            path,
+        }
+    }
+}
+
+#[cfg(feature = "tracing")]
+struct TraceAttemptInfo {
+    attempt: u32,
+    max_attempts: u32,
+    elapsed: Duration,
+    retryable: bool,
+}
+
+#[cfg(feature = "tracing")]
+impl TraceAttemptInfo {
+    fn new(attempt: u32, max_attempts: u32, elapsed: Duration, retryable: bool) -> Self {
+        Self {
+            attempt,
+            max_attempts,
+            elapsed,
+            retryable,
+        }
+    }
+}
+
+#[cfg(feature = "tracing")]
+fn emit_request_trace(
+    request: &TraceRequestInfo,
+    attempt: TraceAttemptInfo,
+    response: &reqwest::Response,
+) {
+    tracing::debug!(
+        target: "rust_genai::http",
+        backend = request.backend,
+        method = %request.method,
+        path = request.path,
+        model = request.model,
+        attempt = attempt.attempt,
+        max_attempts = attempt.max_attempts,
+        status = response.status().as_u16(),
+        retryable = attempt.retryable,
+        retry_after_secs = retry_after_delay_secs(response.headers()),
+        latency_ms = attempt.elapsed.as_millis() as u64,
+        "request completed",
+    );
 }
 
 pub(crate) struct ApiClient {
@@ -1351,6 +1477,49 @@ mod tests {
 
         let delay = retry_after_delay_secs(&headers).unwrap();
         assert!((110.0..=120.0).contains(&delay));
+    }
+
+    #[cfg(feature = "tracing")]
+    #[test]
+    fn test_tracing_helpers_extract_backend_and_model() {
+        assert_eq!(backend_name(Backend::GeminiApi), "gemini");
+        assert_eq!(backend_name(Backend::VertexAi), "vertex");
+        assert_eq!(
+            trace_model_name("/v1beta/models/gemini-2.5-flash:generateContent"),
+            Some("gemini-2.5-flash")
+        );
+        assert_eq!(trace_model_name("/v1beta/files"), None);
+    }
+
+    #[cfg(feature = "tracing")]
+    #[tokio::test]
+    async fn test_emit_request_trace_handles_retry_metadata() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/trace"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header(reqwest::header::RETRY_AFTER.as_str(), "3")
+                    .set_body_string("retry"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Client::new("test-key").unwrap();
+        let request = client
+            .inner
+            .http
+            .get(format!("{}/trace", server.uri()))
+            .build()
+            .unwrap();
+        let trace_request = TraceRequestInfo::new(Backend::GeminiApi, &request);
+        let response = client.inner.http.execute(request).await.unwrap();
+
+        emit_request_trace(
+            &trace_request,
+            TraceAttemptInfo::new(2, 5, Duration::from_millis(25), true),
+            &response,
+        );
     }
 
     #[tokio::test]

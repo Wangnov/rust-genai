@@ -1,13 +1,13 @@
 //! Models API surface.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::BuildHasher;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use futures_util::{Stream, StreamExt};
-use rust_genai_types::content::{Content, FunctionCall, Role};
+use rust_genai_types::content::{Content, FunctionCall, Part, PartKind, Role};
 use rust_genai_types::converters;
 use rust_genai_types::models::{
     ComputeTokensConfig, ComputeTokensRequest, ComputeTokensResponse, CountTokensConfig,
@@ -66,17 +66,22 @@ pub struct Models {
 
 #[derive(Debug, Clone)]
 pub enum GenerateContentStreamEvent {
+    /// Text delta extracted from a streaming chunk.
     Text(String),
+    /// Function call surfaced by a streaming chunk.
     FunctionCall(FunctionCall),
+    /// Usage metadata emitted by a streaming chunk.
     Usage(GenerateContentResponseUsageMetadata),
+    /// Raw response chunk.
     Response(GenerateContentResponse),
+    /// Aggregated final response assembled from the full stream.
     Done(GenerateContentResponse),
 }
 
 pub struct GenerateContentEventStream {
     inner: Pin<Box<dyn Stream<Item = Result<GenerateContentResponse>> + Send>>,
     pending: VecDeque<GenerateContentStreamEvent>,
-    last_response: Option<GenerateContentResponse>,
+    aggregate_response: Option<GenerateContentResponse>,
     saw_done: Arc<AtomicBool>,
     finished: bool,
 }
@@ -89,7 +94,7 @@ impl GenerateContentEventStream {
         Self {
             inner,
             pending: VecDeque::new(),
-            last_response: None,
+            aggregate_response: None,
             saw_done,
             finished: false,
         }
@@ -107,7 +112,7 @@ impl GenerateContentEventStream {
 
             match self.inner.next().await {
                 Some(Ok(response)) => {
-                    self.last_response = Some(response.clone());
+                    merge_stream_response(&mut self.aggregate_response, &response);
                     enqueue_stream_events(&mut self.pending, response);
                 }
                 Some(Err(err)) => {
@@ -117,11 +122,12 @@ impl GenerateContentEventStream {
                 None => {
                     self.finished = true;
                     if self.saw_done.load(Ordering::Relaxed) {
-                        if let Some(response) = self.last_response.take() {
+                        if let Some(mut response) = self.aggregate_response.take() {
+                            normalize_stream_candidate_order(&mut response);
                             return Ok(Some(GenerateContentStreamEvent::Done(response)));
                         }
                     }
-                    self.last_response.take();
+                    self.aggregate_response.take();
                     return Ok(None);
                 }
             }
@@ -151,6 +157,481 @@ fn enqueue_stream_events(
     }
 
     pending.push_back(GenerateContentStreamEvent::Response(response));
+}
+
+fn merge_stream_response(
+    aggregate: &mut Option<GenerateContentResponse>,
+    response: &GenerateContentResponse,
+) {
+    let aggregate = aggregate.get_or_insert_with(|| GenerateContentResponse {
+        sdk_http_response: response.sdk_http_response.clone(),
+        candidates: Vec::new(),
+        create_time: response.create_time.clone(),
+        automatic_function_calling_history: response.automatic_function_calling_history.clone(),
+        prompt_feedback: response.prompt_feedback.clone(),
+        usage_metadata: response.usage_metadata.clone(),
+        model_version: response.model_version.clone(),
+        response_id: response.response_id.clone(),
+    });
+
+    if response.sdk_http_response.is_some() {
+        aggregate.sdk_http_response = response.sdk_http_response.clone();
+    }
+    if response.create_time.is_some() {
+        aggregate.create_time = response.create_time.clone();
+    }
+    if response.automatic_function_calling_history.is_some() {
+        aggregate.automatic_function_calling_history =
+            response.automatic_function_calling_history.clone();
+    }
+    if response.prompt_feedback.is_some() {
+        aggregate.prompt_feedback = response.prompt_feedback.clone();
+    }
+    if let Some(next_usage) = &response.usage_metadata {
+        match &mut aggregate.usage_metadata {
+            Some(existing_usage) => merge_usage_metadata(existing_usage, next_usage),
+            None => aggregate.usage_metadata = Some(next_usage.clone()),
+        }
+    }
+    if response.model_version.is_some() {
+        aggregate.model_version = response.model_version.clone();
+    }
+    if response.response_id.is_some() {
+        aggregate.response_id = response.response_id.clone();
+    }
+
+    for (position, candidate) in response.candidates.iter().enumerate() {
+        let existing_position = if let Some(index) = candidate.index {
+            aggregate
+                .candidates
+                .iter()
+                .position(|item| item.index == Some(index))
+                .or_else(|| {
+                    late_index_stream_position(
+                        &aggregate.candidates,
+                        index,
+                        response.candidates.len(),
+                        position,
+                    )
+                })
+        } else {
+            unindexed_stream_position(&aggregate.candidates, response.candidates.len(), position)
+        };
+
+        if let Some(existing_position) = existing_position {
+            merge_candidate(&mut aggregate.candidates[existing_position], candidate);
+        } else {
+            aggregate.candidates.push(candidate.clone());
+        }
+    }
+}
+
+fn merge_usage_metadata(
+    existing: &mut GenerateContentResponseUsageMetadata,
+    next: &GenerateContentResponseUsageMetadata,
+) {
+    if next.cache_tokens_details.is_some() {
+        existing.cache_tokens_details = next.cache_tokens_details.clone();
+    }
+    if next.cached_content_token_count.is_some() {
+        existing.cached_content_token_count = next.cached_content_token_count;
+    }
+    if next.candidates_token_count.is_some() {
+        existing.candidates_token_count = next.candidates_token_count;
+    }
+    if next.candidates_tokens_details.is_some() {
+        existing.candidates_tokens_details = next.candidates_tokens_details.clone();
+    }
+    if next.prompt_token_count.is_some() {
+        existing.prompt_token_count = next.prompt_token_count;
+    }
+    if next.prompt_tokens_details.is_some() {
+        existing.prompt_tokens_details = next.prompt_tokens_details.clone();
+    }
+    if next.thoughts_token_count.is_some() {
+        existing.thoughts_token_count = next.thoughts_token_count;
+    }
+    if next.tool_use_prompt_token_count.is_some() {
+        existing.tool_use_prompt_token_count = next.tool_use_prompt_token_count;
+    }
+    if next.tool_use_prompt_tokens_details.is_some() {
+        existing.tool_use_prompt_tokens_details = next.tool_use_prompt_tokens_details.clone();
+    }
+    if next.total_token_count.is_some() {
+        existing.total_token_count = next.total_token_count;
+    }
+    if next.traffic_type.is_some() {
+        existing.traffic_type = next.traffic_type;
+    }
+}
+
+fn unindexed_stream_position(
+    aggregate_candidates: &[rust_genai_types::response::Candidate],
+    response_candidate_count: usize,
+    position: usize,
+) -> Option<usize> {
+    if position >= aggregate_candidates.len() {
+        return None;
+    }
+
+    if response_candidate_count == 1 && aggregate_candidates.len() == 1 {
+        return Some(position);
+    }
+
+    if response_candidate_count == aggregate_candidates.len() {
+        return Some(position);
+    }
+
+    None
+}
+
+fn late_index_stream_position(
+    aggregate_candidates: &[rust_genai_types::response::Candidate],
+    index: i32,
+    response_candidate_count: usize,
+    position: usize,
+) -> Option<usize> {
+    let index_position = usize::try_from(index).ok();
+
+    if response_candidate_count == 1
+        && aggregate_candidates.len() == 1
+        && aggregate_candidates[0].index.is_none()
+        && index_position == Some(position)
+    {
+        return Some(position);
+    }
+
+    index_position
+        .filter(|&candidate_position| candidate_position < aggregate_candidates.len())
+        .filter(|&candidate_position| aggregate_candidates[candidate_position].index.is_none())
+}
+
+fn normalize_stream_candidate_order(response: &mut GenerateContentResponse) {
+    if response.candidates.len() < 2 {
+        return;
+    }
+
+    let mut indexed = BTreeMap::new();
+    let mut unindexed = VecDeque::new();
+    let mut overflow = VecDeque::new();
+
+    for candidate in std::mem::take(&mut response.candidates) {
+        match candidate
+            .index
+            .and_then(|index| usize::try_from(index).ok())
+        {
+            Some(index) => match indexed.entry(index) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(candidate);
+                }
+                std::collections::btree_map::Entry::Occupied(_) => overflow.push_back(candidate),
+            },
+            None if candidate.index.is_none() => unindexed.push_back(candidate),
+            None => overflow.push_back(candidate),
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(indexed.len() + unindexed.len() + overflow.len());
+    let mut cursor = 0usize;
+    for (index, candidate) in indexed {
+        let gap = index.saturating_sub(cursor);
+        for _ in 0..gap {
+            if let Some(candidate) = unindexed.pop_front() {
+                ordered.push(candidate);
+            } else {
+                break;
+            }
+        }
+
+        ordered.push(candidate);
+        cursor = index.saturating_add(1);
+    }
+
+    ordered.extend(unindexed);
+    ordered.extend(overflow);
+    response.candidates = ordered;
+}
+
+fn merge_candidate(
+    existing: &mut rust_genai_types::response::Candidate,
+    next: &rust_genai_types::response::Candidate,
+) {
+    if let Some(content) = &next.content {
+        match &mut existing.content {
+            Some(existing_content) => {
+                if existing_content.role.is_none() {
+                    existing_content.role = content.role;
+                }
+                merge_content_parts(&mut existing_content.parts, &content.parts);
+            }
+            None => existing.content = Some(content.clone()),
+        }
+    }
+
+    if next.citation_metadata.is_some() {
+        existing.citation_metadata = next.citation_metadata.clone();
+    }
+    if next.finish_message.is_some() {
+        existing.finish_message = next.finish_message.clone();
+    }
+    if next.token_count.is_some() {
+        existing.token_count = next.token_count;
+    }
+    if next.finish_reason.is_some() {
+        existing.finish_reason = next.finish_reason;
+    }
+    if next.avg_logprobs.is_some() {
+        existing.avg_logprobs = next.avg_logprobs;
+    }
+    if next.grounding_metadata.is_some() {
+        existing.grounding_metadata = next.grounding_metadata.clone();
+    }
+    if next.index.is_some() {
+        existing.index = next.index;
+    }
+    if next.logprobs_result.is_some() {
+        existing.logprobs_result = next.logprobs_result.clone();
+    }
+    if !next.safety_ratings.is_empty() {
+        existing.safety_ratings = next.safety_ratings.clone();
+    }
+    if next.url_context_metadata.is_some() {
+        existing.url_context_metadata = next.url_context_metadata.clone();
+    }
+}
+
+fn merge_content_parts(existing_parts: &mut Vec<Part>, next_parts: &[Part]) {
+    for (position, part) in next_parts.iter().enumerate() {
+        if let Some(existing_position) =
+            find_mergeable_part_index(existing_parts, position, next_parts.len(), part)
+        {
+            merge_stream_part(existing_parts.get_mut(existing_position), part);
+            continue;
+        }
+        existing_parts.push(part.clone());
+    }
+}
+
+fn find_mergeable_part_index(
+    existing_parts: &[Part],
+    position: usize,
+    next_part_count: usize,
+    next_part: &Part,
+) -> Option<usize> {
+    let remaining_existing = existing_parts.len().saturating_sub(position);
+    let remaining_next = next_part_count.saturating_sub(position);
+
+    if remaining_existing == remaining_next
+        && existing_parts
+            .get(position)
+            .is_some_and(|existing_part| stream_parts_can_merge(existing_part, next_part))
+    {
+        return Some(position);
+    }
+
+    let candidates = existing_parts
+        .iter()
+        .enumerate()
+        .skip(position)
+        .filter_map(|(index, existing_part)| {
+            stream_parts_can_merge(existing_part, next_part).then_some(index)
+        })
+        .collect::<Vec<_>>();
+
+    if candidates.len() == 1 {
+        Some(candidates[0])
+    } else {
+        None
+    }
+}
+
+fn merge_stream_part(last_part: Option<&mut Part>, next_part: &Part) -> bool {
+    let Some(last_part) = last_part else {
+        return false;
+    };
+    if !stream_parts_can_merge(last_part, next_part) {
+        return false;
+    }
+
+    match (&mut last_part.kind, &next_part.kind) {
+        (PartKind::Text { text: existing }, PartKind::Text { text }) => {
+            existing.push_str(text.as_str());
+            true
+        }
+        (
+            PartKind::FunctionCall {
+                function_call: existing_call,
+            },
+            PartKind::FunctionCall {
+                function_call: next_call,
+            },
+        ) if function_calls_share_target(existing_call, next_call) => {
+            merge_function_call(existing_call, next_call);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn stream_parts_can_merge(existing_part: &Part, next_part: &Part) -> bool {
+    if !parts_share_merge_context(existing_part, next_part) {
+        return false;
+    }
+
+    match (&existing_part.kind, &next_part.kind) {
+        (PartKind::Text { .. }, PartKind::Text { .. }) => true,
+        (
+            PartKind::FunctionCall {
+                function_call: existing_call,
+            },
+            PartKind::FunctionCall {
+                function_call: next_call,
+            },
+        ) => function_calls_share_target(existing_call, next_call),
+        _ => false,
+    }
+}
+
+fn parts_share_merge_context(last_part: &Part, next_part: &Part) -> bool {
+    last_part.thought == next_part.thought
+        && last_part.thought_signature == next_part.thought_signature
+        && media_resolution_matches(&last_part.media_resolution, &next_part.media_resolution)
+        && video_metadata_matches(&last_part.video_metadata, &next_part.video_metadata)
+}
+
+fn media_resolution_matches(
+    left: &Option<rust_genai_types::content::PartMediaResolution>,
+    right: &Option<rust_genai_types::content::PartMediaResolution>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.level == right.level && left.num_tokens == right.num_tokens
+        }
+        _ => false,
+    }
+}
+
+fn video_metadata_matches(
+    left: &Option<rust_genai_types::content::VideoMetadata>,
+    right: &Option<rust_genai_types::content::VideoMetadata>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.start_offset == right.start_offset
+                && left.end_offset == right.end_offset
+                && left.fps == right.fps
+        }
+        _ => false,
+    }
+}
+
+fn function_calls_share_target(existing: &FunctionCall, next: &FunctionCall) -> bool {
+    let shared_id = if let (Some(existing_id), Some(next_id)) = (&existing.id, &next.id) {
+        if existing_id != next_id {
+            return false;
+        }
+        true
+    } else {
+        false
+    };
+
+    let shared_name = if let (Some(existing_name), Some(next_name)) = (&existing.name, &next.name) {
+        if existing_name != next_name {
+            return false;
+        }
+        true
+    } else {
+        false
+    };
+
+    if shared_id || shared_name {
+        return true;
+    }
+
+    if !function_call_has_identifier(next) {
+        return function_call_accepts_identifierless_delta(existing);
+    }
+
+    if !function_call_has_identifier(existing) {
+        return function_call_accepts_late_identifier(existing);
+    }
+
+    false
+}
+
+fn function_call_has_identifier(call: &FunctionCall) -> bool {
+    call.id.is_some() || call.name.is_some()
+}
+
+fn function_call_accepts_identifierless_delta(call: &FunctionCall) -> bool {
+    call.will_continue != Some(false) && call.args.is_none()
+}
+
+fn function_call_accepts_late_identifier(call: &FunctionCall) -> bool {
+    call.will_continue != Some(false)
+}
+
+fn merge_function_call(existing: &mut FunctionCall, next: &FunctionCall) {
+    if next.id.is_some() {
+        existing.id = next.id.clone();
+    }
+    if next.name.is_some() {
+        existing.name = next.name.clone();
+    }
+    if next.args.is_some() {
+        existing.args = next.args.clone();
+        if next.partial_args.is_none() {
+            existing.partial_args = None;
+        }
+    }
+    if let Some(partial_args) = &next.partial_args {
+        existing
+            .partial_args
+            .get_or_insert_with(Vec::new)
+            .extend(partial_args.clone());
+    }
+    if next.will_continue.is_some() {
+        existing.will_continue = next.will_continue;
+    }
+}
+
+fn prepare_json_generation_config(
+    mut config: GenerateContentConfig,
+    schema: Option<Value>,
+) -> Result<GenerateContentConfig> {
+    let generation_config = config
+        .generation_config
+        .get_or_insert_with(Default::default);
+    match generation_config.response_mime_type.as_deref() {
+        Some("application/json") => {}
+        Some(other) => {
+            return Err(Error::InvalidConfig {
+                message: format!(
+                    "generate_json_with_config requires response_mime_type = application/json, got {other}"
+                ),
+            });
+        }
+        None => {
+            generation_config.response_mime_type = Some("application/json".into());
+        }
+    }
+
+    if let Some(schema) = schema {
+        if generation_config.response_schema.is_some()
+            || generation_config.response_json_schema.is_some()
+        {
+            return Err(Error::InvalidConfig {
+                message:
+                    "generate_json_with_schema_with_config requires an empty response schema configuration"
+                        .into(),
+            });
+        }
+        generation_config.response_json_schema = Some(schema);
+    }
+
+    Ok(config)
 }
 
 struct CallableStreamContext<S> {
@@ -355,25 +836,63 @@ impl Models {
         &self,
         model: impl Into<String>,
         contents: Vec<Content>,
-        mut config: GenerateContentConfig,
+        config: GenerateContentConfig,
     ) -> Result<T> {
-        let generation_config = config
-            .generation_config
-            .get_or_insert_with(Default::default);
-        match generation_config.response_mime_type.as_deref() {
-            Some("application/json") => {}
-            Some(other) => {
-                return Err(Error::InvalidConfig {
-                    message: format!(
-                        "generate_json_with_config requires response_mime_type = application/json, got {other}"
-                    ),
-                });
-            }
-            None => {
-                generation_config.response_mime_type = Some("application/json".into());
-            }
-        }
+        let config = prepare_json_generation_config(config, None)?;
 
+        let response = self
+            .generate_content_with_config(model, contents, config)
+            .await?;
+        let text = first_candidate_text(&response).ok_or_else(|| Error::Parse {
+            message: "Expected text response containing JSON".into(),
+        })?;
+
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    /// 生成并解析 JSON 响应，同时自动附加 JSON Schema。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容、schema 构建失败或 JSON 解析失败时返回错误。
+    ///
+    /// 需要启用 `schemars` feature。
+    #[cfg(feature = "schemars")]
+    pub async fn generate_json_with_schema<T>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned + schemars::JsonSchema,
+    {
+        self.generate_json_with_schema_with_config(
+            model,
+            contents,
+            GenerateContentConfig::default(),
+        )
+        .await
+    }
+
+    /// 生成并解析 JSON 响应，同时自动附加 JSON Schema（自定义配置）。
+    ///
+    /// # Errors
+    ///
+    /// 当请求失败、响应没有文本内容、schema 构建失败或 JSON 解析失败时返回错误。
+    ///
+    /// 需要启用 `schemars` feature。
+    #[cfg(feature = "schemars")]
+    pub async fn generate_json_with_schema_with_config<T>(
+        &self,
+        model: impl Into<String>,
+        contents: Vec<Content>,
+        config: GenerateContentConfig,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned + schemars::JsonSchema,
+    {
+        let schema = serde_json::to_value(schemars::schema_for!(T))?;
+        let config = prepare_json_generation_config(config, Some(schema))?;
         let response = self
             .generate_content_with_config(model, contents, config)
             .await?;

@@ -82,3 +82,47 @@ jobs:
 
       - name: Cargo check (MSRV)
         run: cargo check --all-targets --all-features
+
+  docsrs:
+    name: Docs.rs Build
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTDOCFLAGS: "--cfg docsrs -D warnings"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build public docs
+        run: cargo doc --workspace --all-features --no-deps
+
+  semver:
+    name: Public API Semver
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check rust-genai semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: rust-genai
+
+      - name: Check rust-genai-types semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: rust-genai-types

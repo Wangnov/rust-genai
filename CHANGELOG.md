@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Conformance: add a dedicated `tests/conformance/` suite with mock, live Gemini, live Vertex, preview, and expensive markers plus a nightly/manual conformance workflow.
+- Release engineering: add `SECURITY.md`, `RELEASE.md`, docs.rs verification, and semver checks for the workspace crates.
+- Models: add `generate_json_with_schema` / `generate_json_with_schema_with_config` behind the `schemars` feature for schema-backed structured output.
+- Streaming: aggregate final event-stream responses so `GenerateContentStreamEvent::Done` carries the combined text/tool result across stream chunks.
+- Diagnostics: add optional `tracing` hooks for backend, model, attempt, status, retryability, retry-after, and latency fields.
+
+### Changed
+- Compatibility: bind the compatibility matrix to the new conformance test tiers and make mock vs live verification status explicit.
+- Examples: update `generate_content_events` to print the aggregated final response from the `Done` event.
+- Docs: document optional `schemars` and `tracing` features in the README installation and feature sections.
+
 ## [0.3.1] - 2026-04-20
 
 ### Added
