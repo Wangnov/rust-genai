@@ -550,11 +550,23 @@ fn function_calls_share_target(existing: &FunctionCall, next: &FunctionCall) -> 
         return true;
     }
 
-    !function_call_has_identifier(existing) || !function_call_has_identifier(next)
+    if !function_call_has_identifier(next) {
+        return function_call_accepts_identifierless_delta(existing);
+    }
+
+    if !function_call_has_identifier(existing) {
+        return function_call_accepts_identifierless_delta(existing);
+    }
+
+    false
 }
 
 fn function_call_has_identifier(call: &FunctionCall) -> bool {
     call.id.is_some() || call.name.is_some()
+}
+
+fn function_call_accepts_identifierless_delta(call: &FunctionCall) -> bool {
+    call.will_continue != Some(false) && call.args.is_none()
 }
 
 fn merge_function_call(existing: &mut FunctionCall, next: &FunctionCall) {

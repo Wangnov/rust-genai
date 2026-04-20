@@ -2057,6 +2057,29 @@ fn test_stream_merge_helpers_respect_context_and_targets() {
             will_continue: Some(true),
         }
     ));
+    assert!(!function_calls_share_target(
+        &FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: Some(json!({"city": "Beijing"})),
+            partial_args: None,
+            will_continue: Some(false),
+        },
+        &FunctionCall {
+            id: None,
+            name: None,
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("next".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        }
+    ));
 
     let mut merged_call_part = Part::function_call(lookup_call);
     assert!(merge_stream_part(
@@ -2281,6 +2304,49 @@ fn test_merge_content_parts_merges_identifierless_function_call_delta() {
     assert_eq!(call.id.as_deref(), Some("call-1"));
     assert_eq!(call.name.as_deref(), Some("lookup"));
     assert_eq!(call.partial_args.as_ref().unwrap().len(), 2);
+}
+
+#[test]
+fn test_merge_content_parts_keeps_identifierless_delta_after_completed_call() {
+    let mut existing_parts = vec![
+        Part::text("prefix"),
+        Part::function_call(FunctionCall {
+            id: Some("call-1".into()),
+            name: Some("lookup".into()),
+            args: Some(json!({"city": "Beijing"})),
+            partial_args: None,
+            will_continue: Some(false),
+        }),
+    ];
+
+    merge_content_parts(
+        &mut existing_parts,
+        &[Part::function_call(FunctionCall {
+            id: None,
+            name: None,
+            args: None,
+            partial_args: Some(vec![PartialArg {
+                null_value: None,
+                number_value: None,
+                string_value: Some("next".into()),
+                bool_value: None,
+                json_path: Some("$.city".into()),
+                will_continue: Some(true),
+            }]),
+            will_continue: Some(true),
+        })],
+    );
+
+    assert_eq!(existing_parts.len(), 3);
+    let completed = existing_parts[1].function_call_ref().unwrap();
+    assert_eq!(completed.id.as_deref(), Some("call-1"));
+    assert_eq!(completed.args, Some(json!({"city": "Beijing"})));
+    assert_eq!(completed.will_continue, Some(false));
+
+    let new_call = existing_parts[2].function_call_ref().unwrap();
+    assert!(new_call.id.is_none());
+    assert!(new_call.name.is_none());
+    assert_eq!(new_call.partial_args.as_ref().unwrap().len(), 1);
 }
 
 #[test]
