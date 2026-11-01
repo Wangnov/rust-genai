@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 - Examples: update `generate_content_events` to print the aggregated final response from the `Done` event.
 - Docs: document optional `schemars` and `tracing` features in the README installation and feature sections.
 
+### Fixed
+- Grounding: parse `Segment` and `GroundingSupport.segment` when the API omits zero-valued fields such as `partIndex` and `startIndex`, which previously failed the whole response with `missing field partIndex`.
+
 ## [0.3.1] - 2026-04-20
 
 ### Added
