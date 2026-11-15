@@ -1,4 +1,7 @@
 //! Error definitions for the SDK.
+// `thiserror`'s `#[from]` macro expands `#[from] source: T` into `Self::Variant { source: source }`,
+// which triggers `clippy::redundant_field_names` on Rust 1.100+.
+#![allow(clippy::redundant_field_names)]
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};

@@ -528,22 +528,16 @@ fn video_metadata_matches(
 }
 
 fn function_calls_share_target(existing: &FunctionCall, next: &FunctionCall) -> bool {
-    let shared_id = if let (Some(existing_id), Some(next_id)) = (&existing.id, &next.id) {
-        if existing_id != next_id {
-            return false;
-        }
-        true
-    } else {
-        false
+    let shared_id = match (&existing.id, &next.id) {
+        (Some(existing_id), Some(next_id)) if existing_id != next_id => return false,
+        (Some(_), Some(_)) => true,
+        _ => false,
     };
 
-    let shared_name = if let (Some(existing_name), Some(next_name)) = (&existing.name, &next.name) {
-        if existing_name != next_name {
-            return false;
-        }
-        true
-    } else {
-        false
+    let shared_name = match (&existing.name, &next.name) {
+        (Some(existing_name), Some(next_name)) if existing_name != next_name => return false,
+        (Some(_), Some(_)) => true,
+        _ => false,
     };
 
     if shared_id || shared_name {

@@ -1,4 +1,7 @@
 //! Local token estimation utilities (optional).
+// `thiserror`'s `#[from]` macro expands `#[from] source: T` into `Self::Variant { source: source }`,
+// which triggers `clippy::redundant_field_names` on Rust 1.100+.
+#![allow(clippy::redundant_field_names)]
 
 use rust_genai_types::config::GenerationConfig;
 use rust_genai_types::content::{Content, FunctionCall, FunctionResponse, PartKind};
