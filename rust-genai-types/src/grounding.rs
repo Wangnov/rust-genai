@@ -175,12 +175,16 @@ impl GroundingChunk {
 }
 
 /// Segment of the content.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Segment {
+    #[serde(default)]
     pub part_index: i32,
+    #[serde(default)]
     pub start_index: i32,
+    #[serde(default)]
     pub end_index: i32,
+    #[serde(default)]
     pub text: String,
 }
 
@@ -192,6 +196,7 @@ pub struct GroundingSupport {
     pub grounding_chunk_indices: Vec<i32>,
     #[serde(default)]
     pub confidence_scores: Vec<f64>,
+    #[serde(default)]
     pub segment: Segment,
 }
 
@@ -347,6 +352,32 @@ pub type GroundingChunkWeb = WebChunk;
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn grounding_metadata_parses_segment_without_zero_valued_fields() {
+        let metadata: GroundingMetadata = serde_json::from_value(json!({
+            "groundingChunks": [{ "web": { "uri": "https://example.com", "title": "Example" } }],
+            "groundingSupports": [{
+                "groundingChunkIndices": [0],
+                "segment": { "endIndex": 42, "text": "The S&P 500 closed at" }
+            }]
+        }))
+        .unwrap();
+
+        let segment = &metadata.grounding_supports[0].segment;
+        assert_eq!(segment.part_index, 0);
+        assert_eq!(segment.start_index, 0);
+        assert_eq!(segment.end_index, 42);
+    }
+
+    #[test]
+    fn grounding_support_parses_without_segment() {
+        let support: GroundingSupport =
+            serde_json::from_value(json!({ "groundingChunkIndices": [0] })).unwrap();
+
+        assert_eq!(support.segment.text, "");
+        assert_eq!(support.segment.end_index, 0);
+    }
 
     #[test]
     fn grounding_chunk_uri_and_title() {
